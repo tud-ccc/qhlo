@@ -1,4 +1,4 @@
-#include "QASMFrontend.h"
+#include "frontend/qasm/QASMFrontend.h"
 
 #include "qasm2/QASM2Frontend.h"
 #include "qasm3/QASM3Frontend.h"

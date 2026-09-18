@@ -220,4 +220,28 @@ std::any QASM2Visitor::visitGateCallStatement(
     return {};
 }
 
+std::any
+QASM2Visitor::visitGateStatement(qasm2::qasm2Parser::GateStatementContext* ctx)
+{ return visitChildren(ctx); }
+
+std::any QASM2Visitor::visitResetStatement(
+    qasm2::qasm2Parser::ResetStatementContext* ctx)
+{ return visitChildren(ctx); }
+
+std::any QASM2Visitor::visitBarrierStatement(
+    qasm2::qasm2Parser::BarrierStatementContext* ctx)
+{ return visitChildren(ctx); }
+
+std::any QASM2Visitor::visitOpaqueDeclarationStatement(
+    qasm2::qasm2Parser::OpaqueDeclarationStatementContext* ctx)
+{ return visitChildren(ctx); }
+
+std::any QASM2Visitor::visitMeasureArrowAssignmentStatement(
+    qasm2::qasm2Parser::MeasureArrowAssignmentStatementContext* ctx)
+{ return visitChildren(ctx); }
+
+std::any
+QASM2Visitor::visitIfStatement(qasm2::qasm2Parser::IfStatementContext* ctx)
+{ return visitChildren(ctx); }
+
 } // namespace quantum::frontend
