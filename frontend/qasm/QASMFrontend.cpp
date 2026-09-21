@@ -1,8 +1,17 @@
+//===---- QASMFrontend.cpp -  OpenQASM Frontend Dispatch ----------------===//
+//
+// @author  Lars Schütze (lars.schuetze@tu-dresden.de)
+//===----------------------------------------------------------------------===//
+
 #include "frontend/qasm/QASMFrontend.h"
 
 #include "qasm2/QASM2Frontend.h"
 #include "qasm3/QASM3Frontend.h"
+#include "quantum-mlir/Dialect/QPU/IR/QPUBase.h"
+#include "quantum-mlir/Dialect/Quantum/IR/QuantumBase.h"
 
+#include <mlir/Dialect/SCF/IR/SCF.h>
+#include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/IR/Diagnostics.h>
 
 namespace quantum::frontend {
@@ -46,6 +55,14 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM(
     llvm::StringRef filename,
     mlir::MLIRContext &context)
 {
+
+    context.loadDialect<
+        mlir::quantum::QuantumDialect,
+        mlir::qpu::QPUDialect,
+        mlir::tensor::TensorDialect,
+        mlir::arith::ArithDialect,
+        mlir::scf::SCFDialect>();
+
     switch (detectQASMVersion(source)) {
     case QASMVersion::QASM2: return parseQASM2(source, filename, context);
 

@@ -3,92 +3,110 @@
 // @author  Lars Schütze (lars.schuetze@tu-dresden.de)
 //===----------------------------------------------------------------------===//
 
-#pragma once
+#ifndef QUANTUM_MLIR_FRONTEND_QASM_QASM2_QASM2VISITOR_H
+#define QUANTUM_MLIR_FRONTEND_QASM_QASM2_QASM2VISITOR_H
 
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Value.h"
+#include "GateLibrary.h"
+#include "QASM2TranslationUnit.h"
+#include "QASMIncludeResolver.h"
+#include "QASMScope.h"
 #include "qasm2ParserBaseVisitor.h"
-
-#include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/StringRef.h"
+#include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
 
 #include <any>
+#include <llvm/ADT/StringRef.h>
+#include <mlir/IR/Builders.h>
+#include <mlir/IR/BuiltinOps.h>
+#include <mlir/IR/Value.h>
 #include <optional>
 #include <string>
 
+using namespace qasm2;
+
 namespace quantum::frontend {
 
-class QASM2Visitor final : public qasm2::qasm2ParserBaseVisitor {
+struct QuantumOperand {
+    QASMScope::QuantumRegister* reg;
+    std::optional<unsigned> index;
+    mlir::Value value;
+};
+
+class QASM2Visitor final : public qasm2ParserBaseVisitor {
 public:
     QASM2Visitor(
         mlir::MLIRContext &context,
         mlir::ModuleOp module,
-        llvm::StringRef filename);
+        mlir::qpu::QPUModuleOp qpuModule,
+        mlir::qpu::CircuitOp mainCircuit,
+        llvm::StringRef filename,
+        QASMScope &scope,
+        GateLibrary &gateLibrary,
+        QASMIncludeResolver &includeResolver,
+        qasm2::QASM2TranslationUnit &translationUnit);
 
     bool failed() const { return hadError; }
 
-    std::any visitProgram(qasm2::qasm2Parser::ProgramContext* ctx) override;
+    std::any visitProgram(qasm2Parser::ProgramContext* ctx) override;
 
-    std::any visitVersion(qasm2::qasm2Parser::VersionContext* ctx) override;
+    std::any
+    visitIncludeStatement(qasm2Parser::IncludeStatementContext* ctx) override;
+
+    std::any visitVersion(qasm2Parser::VersionContext* ctx) override;
 
     std::any visitOldStyleDeclarationStatement(
-        qasm2::qasm2Parser::OldStyleDeclarationStatementContext* ctx) override;
+        qasm2Parser::OldStyleDeclarationStatementContext* ctx) override;
 
-    std::any visitGateCallStatement(
-        qasm2::qasm2Parser::GateCallStatementContext* ctx) override;
+    std::any
+    visitGateCallStatement(qasm2Parser::GateCallStatementContext* ctx) override;
 
     std::any visitMeasureArrowAssignmentStatement(
-        qasm2::qasm2Parser::MeasureArrowAssignmentStatementContext* ctx)
-        override;
-
-    std::any visitResetStatement(
-        qasm2::qasm2Parser::ResetStatementContext* ctx) override;
-
-    std::any visitBarrierStatement(
-        qasm2::qasm2Parser::BarrierStatementContext* ctx) override;
+        qasm2Parser::MeasureArrowAssignmentStatementContext* ctx) override;
 
     std::any
-    visitGateStatement(qasm2::qasm2Parser::GateStatementContext* ctx) override;
+    visitResetStatement(qasm2Parser::ResetStatementContext* ctx) override;
+
+    std::any
+    visitBarrierStatement(qasm2Parser::BarrierStatementContext* ctx) override;
+
+    std::any
+    visitGateStatement(qasm2Parser::GateStatementContext* ctx) override;
 
     std::any visitOpaqueDeclarationStatement(
-        qasm2::qasm2Parser::OpaqueDeclarationStatementContext* ctx) override;
+        qasm2Parser::OpaqueDeclarationStatementContext* ctx) override;
 
-    std::any
-    visitIfStatement(qasm2::qasm2Parser::IfStatementContext* ctx) override;
+    std::any visitIfStatement(qasm2Parser::IfStatementContext* ctx) override;
 
 private:
-    struct QuantumRegister {
-        mlir::Value value;
-        unsigned size;
-    };
+    mlir::Location getLocation(antlr4::ParserRuleContext* ctx) const;
 
-    struct ClassicalRegister {
-        mlir::Value value;
-        unsigned size;
-    };
-
-    struct QuantumOperand {
-        QuantumRegister* reg;
-        std::optional<unsigned> index;
-    };
-
-    mlir::Location location(antlr4::ParserRuleContext* ctx) const;
+    std::optional<unsigned> parseUnsigned(
+        antlr4::tree::TerminalNode* node,
+        antlr4::ParserRuleContext* ctx);
 
     void error(antlr4::ParserRuleContext* ctx, const llvm::Twine &message);
 
     std::optional<QuantumOperand>
-    resolveQuantumOperand(qasm2::qasm2Parser::GateOperandContext* ctx);
+    resolveQuantumOperand(qasm2Parser::GateOperandContext* ctx);
+
+    mlir::Value resolveExpression(qasm2Parser::ExpressionContext* ctx);
+    mlir::Value resolveClassicExpression(qasm2Parser::ExpressionContext* ctx);
 
     mlir::MLIRContext &context;
     mlir::ModuleOp module;
+    mlir::qpu::QPUModuleOp qpuModule;
     mlir::OpBuilder builder;
+    mlir::qpu::CircuitOp mainCircuit;
+
     std::string filename;
 
-    llvm::StringMap<QuantumRegister> qregs;
-    llvm::StringMap<ClassicalRegister> cregs;
+    QASMScope &scope;
+    GateLibrary &gateLibrary;
+    QASMIncludeResolver &includeResolver;
+    qasm2::QASM2TranslationUnit &translationUnit;
 
     bool hadError = false;
 };
 
 } // namespace quantum::frontend
+
+#endif // QUANTUM_MLIR_FRONTEND_QASM_QASM2_QASM2VISITOR_H

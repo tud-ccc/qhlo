@@ -62,6 +62,30 @@ target_link_libraries(QuantumQASM2Parser
 )
 
 ################################################################################
+# Embedded qelib1.inc
+################################################################################
+
+file(
+    READ
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/qelib1.inc"
+    QELIB1_SOURCE
+)
+
+set(QASM2_GENERATED_RESOURCE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/resources"
+)
+
+file(MAKE_DIRECTORY
+    "${QASM2_GENERATED_RESOURCE_DIR}"
+)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/QELib1.h.in"
+    "${QASM2_GENERATED_RESOURCE_DIR}/QELib1.h"
+    @ONLY
+)
+
+################################################################################
 # The QASM 2.0 frontend
 ################################################################################
 
@@ -71,6 +95,7 @@ set(LLVM_REQUIRES_EH ON)
 add_mlir_library(QuantumQASM2Frontend
     QASM2Frontend.cpp
     QASM2Visitor.cpp
+    GateLibrary.cpp
 
     EXCLUDE_FROM_LIBMLIR
 
@@ -80,11 +105,17 @@ add_mlir_library(QuantumQASM2Frontend
 
     PUBLIC
         QuantumQASMCommon
+        QuantumIR
+        MLIRArithDialect
+        MLIRMathDialect
         MLIRIR
         MLIRSupport
+        LLVMSupport
 )
 
 target_include_directories(QuantumQASM2Frontend
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    PRIVATE
+        "${QASM2_GENERATED_RESOURCE_DIR}"
 )

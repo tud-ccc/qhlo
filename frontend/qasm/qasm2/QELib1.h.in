@@ -1,0 +1,21 @@
+//===---- QELib1.h.in -  Embedded Quantum Gate Library ------------------===//
+//
+// @author  Lars Schütze (lars.schuetze@tu-dresden.de)
+//===----------------------------------------------------------------------===//
+
+#ifndef QUANTUM_MLIR_FRONTEND_QASM_QASM2_QELIB1_H
+#define QUANTUM_MLIR_FRONTEND_QASM_QASM2_QELIB1_H
+
+#include "llvm/ADT/StringRef.h"
+
+namespace quantum::frontend::qasm2 {
+
+inline constexpr char QELib1Source[] = R"QELIB(
+@QELIB1_SOURCE@
+)QELIB";
+
+inline llvm::StringRef getQELib1Source() { return QELib1Source; }
+
+} // namespace quantum::frontend::qasm2
+
+#endif // QUANTUM_MLIR_FRONTEND_QASM_QASM2_QELIB1_H

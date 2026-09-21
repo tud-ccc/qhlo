@@ -3,7 +3,8 @@
 // @author  Lars Schütze (lars.schuetze@tu-dresden.de)
 //===----------------------------------------------------------------------===//
 
-#pragma once
+#ifndef QUANTUM_MLIR_FRONTEND_QASM_QASM3_QASM3FRONTEND_H
+#define QUANTUM_MLIR_FRONTEND_QASM_QASM3_QASM3FRONTEND_H
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -18,3 +19,5 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM3(
     mlir::MLIRContext &context);
 
 } // namespace quantum::frontend
+
+#endif // QUANTUM_MLIR_FRONTEND_QASM_QASM3_QASM3FRONTEND_H

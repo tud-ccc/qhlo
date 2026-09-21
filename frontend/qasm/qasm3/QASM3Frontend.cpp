@@ -1,3 +1,8 @@
+//===---- QASM3Frontend.cpp -  OpenQASM 3 Frontend ----------------------===//
+//
+// @author  Lars Schütze (lars.schuetze@tu-dresden.de)
+//===----------------------------------------------------------------------===//
+
 #include "QASM3Frontend.h"
 
 mlir::OwningOpRef<mlir::ModuleOp> quantum::frontend::parseQASM3(

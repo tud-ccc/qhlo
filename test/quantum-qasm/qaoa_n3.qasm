@@ -1,5 +1,4 @@
-// RUN: quantum-qasm %s
-// | quantum-opt --inline --convert-quantum-to-qillr | FileCheck %s
+// RUN: quantum-qasm %s | FileCheck %s
 // Stripped down from QASMBenc small/qaoa_n3.qasm
 
 // CHECK: module {
