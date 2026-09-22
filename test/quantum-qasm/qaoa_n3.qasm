@@ -22,6 +22,9 @@
 // CHECK-NEXT: %[[MEASURE1:.*]], %[[POST1:.*]] = "quantum.measure"(%[[H1]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
 // CHECK-NEXT: %[[TENSOR1:.*]] = "quantum.to_tensor"(%[[MEASURE1]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT: %[[RESULT1:.*]] = tensor.insert_slice %[[TENSOR1]] into %[[ZERO1]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
+// CHECK-DAG: "quantum.deallocate"(%[[POST0]]) : (!quantum.qubit<1>) -> ()
+// CHECK-DAG: "quantum.deallocate"(%[[POST1]]) : (!quantum.qubit<1>) -> ()
+// CHECK-DAG: "quantum.deallocate"(%[[POST2]]) : (!quantum.qubit<1>) -> ()
 // CHECK-NEXT: "qpu.return"(%[[RESULT0]], %[[RESULT1]], %[[RESULT2]]) : (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>) -> ()
 // CHECK-NEXT: }) : () -> ()
 // CHECK-NEXT: }

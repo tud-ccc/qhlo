@@ -1,7 +1,7 @@
 // RUN: quantum-qasm %s | FileCheck %s
 
 //CHECK: module {
-//CHECK:   qpu.module @qpu {
+//CHECK:   qpu.module @qasm_generated {
 //CHECK:     "qpu.circuit"() <{function_type = () -> tensor<1xi1>, sym_name = "main"}> ({
 //CHECK:       %[[QUBIT:.+]] = "quantum.alloc"() : () -> !quantum.qubit<1>
 //CHECK:       %[[CST:.+]] = arith.constant dense<false> : tensor<1xi1>
@@ -36,9 +36,9 @@
 //CHECK:       "qpu.return"(%[[INSERTED2]]) : (tensor<1xi1>) -> ()
 //CHECK:     }) : () -> ()
 //CHECK:   }
-//CHECK:   func.func public @qasm_main() -> tensor<1xi1> {
+//CHECK:   func.func @qasm_main() -> tensor<1xi1> {
 //CHECK:     %[[EMPTY:.+]] = tensor.empty() : tensor<1xi1>
-//CHECK:     %[[RES:.+]] = qpu.execute @qpu::@main ins () outs (%[[EMPTY]] : tensor<1xi1>)
+//CHECK:     %[[RES:.+]] = qpu.execute @qasm_generated::@main ins () outs (%[[EMPTY]] : tensor<1xi1>)
 //CHECK:     return %[[RES]] : tensor<1xi1>
 //CHECK:   }
 //CHECK: }

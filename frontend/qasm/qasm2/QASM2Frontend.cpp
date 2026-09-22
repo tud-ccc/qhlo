@@ -8,6 +8,7 @@
 #include "QASM2Visitor.h"
 #include "QELib1.h"
 #include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
+#include "quantum-mlir/Dialect/Quantum/IR/QuantumOps.h"
 
 #include <antlr4-runtime.h>
 #include <llvm/ADT/SmallVector.h>
@@ -85,6 +86,16 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM2(
 
     if (visitor.failed()) return {};
 
+    builder.setInsertionPointToEnd(&mainCircuit.getBody().front());
+    for (const auto &entry : scope.getQRegs()) {
+        for (const auto &interval : entry.getValue().intervals.intervals()) {
+            mlir::quantum::DeallocateOp::create(
+                builder,
+                moduleLoc,
+                interval.value);
+        }
+    }
+
     llvm::SmallVector<mlir::Value> returnValues;
     llvm::SmallVector<mlir::Type> returnTypes;
     for (const auto &entry : scope.getCRegs()) {
@@ -94,7 +105,6 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM2(
         returnTypes.push_back(value.getType());
     }
 
-    builder.setInsertionPointToEnd(&mainCircuit.getBody().front());
     mlir::qpu::ReturnOp::create(builder, moduleLoc, returnValues);
     mainCircuit.setFunctionType(
         mlir::FunctionType::get(&context, {}, returnTypes));
@@ -105,6 +115,7 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM2(
         moduleLoc,
         "qasm_main",
         mlir::FunctionType::get(&context, {}, returnTypes));
+    entryPoint.setPublic();
     builder.setInsertionPointToStart(entryPoint.addEntryBlock());
 
     llvm::SmallVector<mlir::Value> outputs;

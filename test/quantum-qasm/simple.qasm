@@ -40,6 +40,8 @@ sxdg q[0];
 
 // sxdg consumes the updated q[0] and calls the gate defined above.
 // CHECK-NEXT: %[[SXDG:.*]] = "quantum.call"(%[[CQ]]) <{callee = @sxdg}> : (!quantum.qubit<1>) -> !quantum.qubit<1>
+// CHECK-DAG: "quantum.deallocate"(%[[SXDG]]) : (!quantum.qubit<1>) -> ()
+// CHECK-DAG: "quantum.deallocate"(%[[TQ]]) : (!quantum.qubit<1>) -> ()
 // CHECK-NEXT: "qpu.return"() : () -> ()
 // CHECK-NEXT: }) : () -> ()
 // CHECK-NEXT: }
