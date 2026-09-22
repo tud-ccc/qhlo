@@ -2,7 +2,7 @@
 
 `hybrid-quantum` is an MLIR-based compiler infrastructure for hybrid quantum-classical programs. It provides quantum-specific dialects, analyses, and optimization passes together with lowering paths to LLVM IR and the [Quantum Intermediate Representation (QIR)](https://github.com/qir-alliance/qir-spec).
 
-The project also provides optional Python bindings, an OpenQASM frontend based on [Qiskit](https://www.ibm.com/quantum/qiskit), and execution support through [QIR Runner](https://github.com/qir-alliance/qir-runner).
+The project also provides optional Python bindings, an OpenQASM frontend and OpenQASM2 codegen, and execution support through [QIR Runner](https://github.com/qir-alliance/qir-runner).
 
 > **Status**
 >
@@ -14,7 +14,7 @@ The project also provides optional Python bindings, an OpenQASM frontend based o
 - Progressive lowering through MLIR to LLVM IR and QIR.
 - Quantum-specific analyses and optimization passes.
 - C and Python APIs for integrating the compiler into external tools.
-- Optional OpenQASM frontend using Qiskit.
+- Optional OpenQASM frontend.
 - Optional QIR Runner backend.
 - `lit`/FileCheck dialect tests and C++ unit tests.
 
@@ -27,7 +27,6 @@ The project is currently built and tested with the following versions:
 | LLVM / MLIR | `23.1.1` (`6dfe167`) |
 | CMake | `3.23` or newer |
 | Python | `3.12` |
-| Qiskit | `2.0.0` |
 | QIR Runner | `0.7.6` |
 
 Newer versions may work, but are not necessarily part of the tested configuration.
@@ -37,7 +36,7 @@ Newer versions may work, but are not necessarily part of the tested configuratio
 ```text
 hybrid-quantum/
 ├── docs/        Documentation
-├── frontend/    Frontends, including OpenQASM/Qiskit integration
+├── frontend/    Frontends, including OpenQASM integration
 ├── include/     Public C++ and TableGen headers
 ├── lib/         Dialect, transformation, backend, and C API implementations
 ├── python/      Python bindings
@@ -57,8 +56,7 @@ A minimal build requires:
 
 Additional requirements depend on enabled components:
 
-- Python 3.12 and the MLIR Python bindings for the Python API and OpenQASM frontend,
-- Qiskit for the OpenQASM frontend,
+- Python 3.12 and the MLIR Python bindings for the Python API,
 - Rust/Cargo and QIR Runner for the QIR Runner backend,
 - `uv` is recommended for Python environment management.
 
@@ -77,9 +75,6 @@ source .venv/bin/activate
 
 # Install project development dependencies.
 uv pip install -r requirements.txt
-
-# Install frontend dependencies when the OpenQASM frontend is enabled.
-uv pip install -r frontend/requirements.txt
 
 # Configure and build.
 cmake --preset llvm-23.1.1
@@ -122,7 +117,7 @@ git clone \
 
 ### Python environment for MLIR bindings
 
-The OpenQASM frontend and this project's Python API require MLIR's Python bindings. MLIR does not enable them by default.
+The project's Python API require MLIR's Python bindings. MLIR does not enable them by default.
 
 Create a virtual environment:
 
@@ -184,33 +179,12 @@ To verify the installation:
 
 ## Optional Components
 
-### OpenQASM / Qiskit Frontend
+### OpenQASM Frontend
 
 The OpenQASM frontend is optional and controlled by:
 
 ```text
 FRONTEND_QASM=ON
-```
-
-The frontend is currently tested with Qiskit `2.0.0`.
-
-Install its Python dependencies into the same virtual environment:
-
-```sh
-source "$VENV_DIR/bin/activate"
-uv pip install -r "$PROJECT_SRC/frontend/requirements.txt"
-```
-
-LLVM/MLIR must have been built with:
-
-```text
-MLIR_ENABLE_BINDINGS_PYTHON=ON
-```
-
-and the project must be configured with a valid:
-
-```text
-Python3_EXECUTABLE
 ```
 
 To disable the frontend:
@@ -227,7 +201,7 @@ The QIR Runner backend is optional and controlled by:
 BACKEND_QIR=ON
 ```
 
-The project is currently tested with QIR Runner `0.7.6`.
+The project is currently tested with custom-patched QIR Runner `0.7.6`.
 
 Clone and build the tested release:
 
@@ -458,7 +432,7 @@ The most important project CMake variables are:
 | `LLVM_DIR` | `PATH` | Path to LLVM's CMake package directory, e.g. `$LLVM_BUILD/lib/cmake/llvm`. Usually associated with the LLVM installation used by MLIR. |
 | `Python3_EXECUTABLE` | `FILEPATH` | Python interpreter used for the Python bindings and frontend. Use the interpreter from the project's virtual environment. |
 | `MLIR_ENABLE_BINDINGS_PYTHON` | `BOOL` | Enables this project's Python bindings. LLVM/MLIR itself must also have been built with Python bindings enabled. |
-| `FRONTEND_QASM` | `BOOL` | Enables the Qiskit/OpenQASM frontend. |
+| `FRONTEND_QASM` | `BOOL` | Enables the OpenQASM frontend. |
 | `BACKEND_QIR` | `BOOL` | Enables the QIR Runner backend. |
 | `QIR_DIR` | `PATH` | Directory containing the built QIR Runner libraries, currently `$QIR_SRC/target/release/deps`. Required when `BACKEND_QIR=ON`. |
 | `BUILD_TESTING` | `BOOL` | Enables C++ unit tests. |
