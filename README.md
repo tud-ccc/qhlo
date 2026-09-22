@@ -1,6 +1,6 @@
-# hybrid-quantum
+# QHLO
 
-`hybrid-quantum` is an MLIR-based compiler infrastructure for hybrid quantum-classical programs. It provides quantum-specific dialects, analyses, and optimization passes together with lowering paths to LLVM IR and the [Quantum Intermediate Representation (QIR)](https://github.com/qir-alliance/qir-spec).
+`qhlo` is an MLIR-based compiler infrastructure for hybrid quantum-classical programs. It provides quantum-specific dialects, analyses, and optimization passes together with lowering paths to LLVM IR and the [Quantum Intermediate Representation (QIR)](https://github.com/qir-alliance/qir-spec).
 
 The project also provides optional Python bindings, an OpenQASM frontend and OpenQASM2 codegen, and execution support through [QIR Runner](https://github.com/qir-alliance/qir-runner).
 
@@ -34,7 +34,7 @@ Newer versions may work, but are not necessarily part of the tested configuratio
 ## Repository Layout
 
 ```text
-hybrid-quantum/
+qhlo/
 ├── docs/        Documentation
 ├── frontend/    Frontends, including OpenQASM integration
 ├── include/     Public C++ and TableGen headers
@@ -101,7 +101,7 @@ Choose source and build directories first:
 ```sh
 export LLVM_SRC="$HOME/src/llvm-project"
 export LLVM_BUILD="$LLVM_SRC/build"
-export PROJECT_SRC="$HOME/src/hybrid-quantum"
+export PROJECT_SRC="$HOME/src/qhlo"
 export VENV_DIR="$PROJECT_SRC/.venv"
 ```
 
@@ -233,7 +233,7 @@ To disable the backend:
 
 ---
 
-## Building hybrid-quantum
+## Building qhlo
 
 ### Recommended: CMake Presets
 
@@ -254,7 +254,7 @@ A local preset can inherit from the repository's LLVM 23 preset:
       "cacheVariables": {
         "LLVM_DIR": "/absolute/path/to/llvm-project/build/lib/cmake/llvm",
         "MLIR_DIR": "/absolute/path/to/llvm-project/build/lib/cmake/mlir",
-        "Python3_EXECUTABLE": "/absolute/path/to/hybrid-quantum/.venv/bin/python3",
+        "Python3_EXECUTABLE": "/absolute/path/to/qhlo/.venv/bin/python3",
         "QIR_DIR": "/absolute/path/to/qir-runner/target/release/deps"
       }
     }
@@ -439,7 +439,7 @@ The most important project CMake variables are:
 | `CMAKE_BUILD_TYPE` | `STRING` | Build configuration for single-config generators such as Ninja, typically `Debug` or `Release`. |
 | `CMAKE_EXPORT_COMPILE_COMMANDS` | `BOOL` | Generates `compile_commands.json` for tooling such as clangd. |
 
-LLVM-specific variables such as `MLIR_BUILD_MLIR_C_DYLIB` belong to the LLVM/MLIR build and are not project options of `hybrid-quantum`.
+LLVM-specific variables such as `MLIR_BUILD_MLIR_C_DYLIB` belong to the LLVM/MLIR build and are not project options of `qhlo`.
 
 ---
 
