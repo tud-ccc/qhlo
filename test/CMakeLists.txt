@@ -31,6 +31,7 @@ set(TEST_DEPENDS
     mlir-runner
     quantum-opt
     quantum-translate
+    quantum-qasm
     MLIRCAPIQILLR
     MLIRCAPIRVSDG
     MLIRCAPIQUANTUM

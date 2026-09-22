@@ -74,6 +74,7 @@ llvm_config.with_environment("PATH", config.quantum_tools_dir, append_path=True)
 tool_dirs = [config.quantum_tools_dir, config.llvm_tools_dir]
 tools = [
     "quantum-opt",
+    "quantum-qasm",
     "mlir-runner",
     "mlir-translate",
     add_runtime("mlir_runner_utils"),
