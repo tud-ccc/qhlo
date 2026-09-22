@@ -1,6 +1,6 @@
-# hybrid-quantum
+# QHLO
 
-`hybrid-quantum` is an MLIR-based compiler infrastructure for hybrid quantum-classical programs. It provides quantum-specific dialects, analyses, and optimization passes together with lowering paths to LLVM IR and the [Quantum Intermediate Representation (QIR)](https://github.com/qir-alliance/qir-spec).
+`qhlo` is an MLIR-based compiler infrastructure for hybrid quantum-classical programs. It provides quantum-specific dialects, analyses, and optimization passes together with lowering paths to LLVM IR and the [Quantum Intermediate Representation (QIR)](https://github.com/qir-alliance/qir-spec).
 
 The project also provides optional Python bindings, an OpenQASM frontend and OpenQASM2 codegen, and execution support through [QIR Runner](https://github.com/qir-alliance/qir-runner).
 
