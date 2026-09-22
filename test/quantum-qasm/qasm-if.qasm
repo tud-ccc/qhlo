@@ -1,4 +1,4 @@
-// RUN: %PYTHON qasm-import -i %s -r | FileCheck %s
+// RUN: quantum-qasm %s | FileCheck %s
 
 //CHECK: module {
 //CHECK:   qpu.module @qpu {
@@ -12,30 +12,22 @@
 //CHECK:       %[[CMP0:.+]] = arith.cmpi eq, %[[INSERTED]], %[[CST0]] : tensor<1xi1>
 //CHECK:       %[[IDX0:.+]] = arith.constant 0 : index
 //CHECK:       %[[EXTRACT0:.+]] = tensor.extract %[[CMP0]][%[[IDX0]]] : tensor<1xi1>
-//CHECK:       %[[MATCH0:.+]] = rvsdg.match(%[[EXTRACT0]] : i1) [#rvsdg.matchRule<1 -> 0>, #rvsdg.matchRule<0 -> 1>] -> <2>
-//CHECK:       %[[GAMMA0:.+]] = rvsdg.gamma(%[[MATCH0]] : <2>) (%[[RES]]: !quantum.qubit<1>) : [
-//CHECK:         (%[[ARG0:.+]]: !quantum.qubit<1>): {
-//CHECK:           %[[X0:.+]] = "quantum.X"(%[[ARG0]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
-//CHECK:           rvsdg.yield (%[[X0]]: !quantum.qubit<1>)
-//CHECK:         }, 
-//CHECK:         (%[[ARG1:.+]]: !quantum.qubit<1>): {
-//CHECK:           rvsdg.yield (%[[ARG1]]: !quantum.qubit<1>)
-//CHECK:         }
-//CHECK:       ] -> !quantum.qubit<1>
+//CHECK:       %[[GAMMA0:.+]] = scf.if %[[EXTRACT0]] -> (!quantum.qubit<1>) {
+//CHECK:           %[[X0:.+]] = "quantum.X"(%[[RES]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+//CHECK:           scf.yield %[[X0]] : !quantum.qubit<1>
+//CHECK:       } else {
+//CHECK:           scf.yield %[[RES]] : !quantum.qubit<1>
+//CHECK:       }
 //CHECK:       %[[CST1:.+]] = arith.constant dense<false> : tensor<1xi1>
 //CHECK:       %[[CMP1:.+]] = arith.cmpi eq, %[[INSERTED]], %[[CST1]] : tensor<1xi1>
 //CHECK:       %[[IDX1:.+]] = arith.constant 0 : index
 //CHECK:       %[[EXTRACT1:.+]] = tensor.extract %[[CMP1]][%[[IDX1]]] : tensor<1xi1>
-//CHECK:       %[[MATCH1:.+]] = rvsdg.match(%[[EXTRACT1]] : i1) [#rvsdg.matchRule<1 -> 0>, #rvsdg.matchRule<0 -> 1>] -> <2>
-//CHECK:       %[[GAMMA1:.+]] = rvsdg.gamma(%[[MATCH1]] : <2>) (%[[GAMMA0]]: !quantum.qubit<1>) : [
-//CHECK:         (%[[ARG2:.+]]: !quantum.qubit<1>): {
-//CHECK:           %[[X1:.+]] = "quantum.X"(%[[ARG2]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
-//CHECK:           rvsdg.yield (%[[X1]]: !quantum.qubit<1>)
-//CHECK:         }, 
-//CHECK:         (%[[ARG3:.+]]: !quantum.qubit<1>): {
-//CHECK:           rvsdg.yield (%[[ARG3]]: !quantum.qubit<1>)
-//CHECK:         }
-//CHECK:       ] -> !quantum.qubit<1>
+//CHECK:       %[[GAMMA1:.+]] = scf.if %[[EXTRACT1]] -> (!quantum.qubit<1>) {
+//CHECK:           %[[X1:.+]] = "quantum.X"(%[[GAMMA0]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+//CHECK:           scf.yield %[[X1]] : !quantum.qubit<1>
+//CHECK:       } else {
+//CHECK:           scf.yield %[[GAMMA0]] : !quantum.qubit<1>
+//CHECK:       }
 //CHECK:       %[[MEAS2:.+]], %[[RES2:.+]] = "quantum.measure"(%[[GAMMA1]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
 //CHECK:       %[[TENSOR2:.+]] = "quantum.to_tensor"(%[[MEAS2]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 //CHECK:       %[[INSERTED2:.+]] = tensor.insert_slice %[[TENSOR2]] into %[[INSERTED]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>

@@ -2,34 +2,37 @@
 // Stripped down from QASMBenc small/qaoa_n3.qasm
 
 // CHECK: module {
-// CHECK:  qpu.module @qpu {
-//     "qpu.circuit"() <{function_type = () -> tensor<3xi1>, sym_name = "main"}> ({
-//       %0 = "quantum.alloc"() : () -> !quantum.qubit<3>
-//       %1:2 = "quantum.split"(%0) : (!quantum.qubit<3>) -> (!quantum.qubit<1>, !quantum.qubit<2>)
-//       %2 = "quantum.H"(%1#0) : (!quantum.qubit<1>) -> !quantum.qubit<1>
-//       %3:2 = "quantum.split"(%1#1) : (!quantum.qubit<2>) -> (!quantum.qubit<1>, !quantum.qubit<1>)
-//       %4 = "quantum.H"(%3#0) : (!quantum.qubit<1>) -> !quantum.qubit<1>
-//       %5 = "quantum.H"(%3#1) : (!quantum.qubit<1>) -> !quantum.qubit<1>
-//       %measurement, %result = "quantum.measure"(%5) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-//       %[[6:.+]] = "quantum.to_tensor"(%measurement) : (!quantum.measurement<1>) -> tensor<1xi1>
-//       %measurement_0, %result_1 = "quantum.measure"(%2) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-//       %[[7:.+]] = "quantum.to_tensor"(%measurement_0) : (!quantum.measurement<1>) -> tensor<1xi1>
-//       %measurement_2, %result_3 = "quantum.measure"(%4) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-//       %[[8:.]] = "quantum.to_tensor"(%measurement_2) : (!quantum.measurement<1>) -> tensor<1xi1>
-//       "quantum.deallocate"(%result_1) : (!quantum.qubit<1>) -> ()
-//       "quantum.deallocate"(%result_3) : (!quantum.qubit<1>) -> ()
-//       "quantum.deallocate"(%result) : (!quantum.qubit<1>) -> ()
-//       %concat = tensor.concat dim(0) %[[6]], %[[7]], %[[8]] : (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>) -> tensor<3xi1>
-//       "qpu.return"(%concat) : (tensor<3xi1>) -> ()
-//     }) : () -> ()
-//   }
-//   func.func public @qasm_main() -> tensor<3xi1> {
-//     %[[EMPTY:.+]] = tensor.empty() : tensor<3xi1>
-//     %[[RES:.+]] = qpu.execute @qpu::@main ins() outs(%[[EMPTY]] : tensor<3xi1>)
-//     return %[[RES]] : tensor<3xi1>
-//   }
-// }
-
+// CHECK-NEXT: qpu.module @qasm_generated {
+// CHECK-NEXT: "qpu.circuit"() <{function_type = () -> (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>), sym_name = "main"}> ({
+// CHECK-NEXT: %[[Q:.*]] = "quantum.alloc"() : () -> !quantum.qubit<3>
+// CHECK-NEXT: %[[SPLIT0:.*]]:2 = "quantum.split"(%[[Q]]) : (!quantum.qubit<3>) -> (!quantum.qubit<1>, !quantum.qubit<2>)
+// CHECK-NEXT: %[[H0:.*]] = "quantum.H"(%[[SPLIT0]]#0) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+// CHECK-NEXT: %[[SPLIT1:.*]]:2 = "quantum.split"(%[[SPLIT0]]#1) : (!quantum.qubit<2>) -> (!quantum.qubit<1>, !quantum.qubit<1>)
+// CHECK-NEXT: %[[H1:.*]] = "quantum.H"(%[[SPLIT1]]#0) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+// CHECK-NEXT: %[[H2:.*]] = "quantum.H"(%[[SPLIT1]]#1) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+// CHECK-NEXT: %[[ZERO2:.*]] = arith.constant dense<false> : tensor<1xi1>
+// CHECK-NEXT: %[[MEASURE2:.*]], %[[POST2:.*]] = "quantum.measure"(%[[H2]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
+// CHECK-NEXT: %[[TENSOR2:.*]] = "quantum.to_tensor"(%[[MEASURE2]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT: %[[RESULT2:.*]] = tensor.insert_slice %[[TENSOR2]] into %[[ZERO2]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
+// CHECK-NEXT: %[[ZERO0:.*]] = arith.constant dense<false> : tensor<1xi1>
+// CHECK-NEXT: %[[MEASURE0:.*]], %[[POST0:.*]] = "quantum.measure"(%[[H0]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
+// CHECK-NEXT: %[[TENSOR0:.*]] = "quantum.to_tensor"(%[[MEASURE0]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT: %[[RESULT0:.*]] = tensor.insert_slice %[[TENSOR0]] into %[[ZERO0]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
+// CHECK-NEXT: %[[ZERO1:.*]] = arith.constant dense<false> : tensor<1xi1>
+// CHECK-NEXT: %[[MEASURE1:.*]], %[[POST1:.*]] = "quantum.measure"(%[[H1]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
+// CHECK-NEXT: %[[TENSOR1:.*]] = "quantum.to_tensor"(%[[MEASURE1]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT: %[[RESULT1:.*]] = tensor.insert_slice %[[TENSOR1]] into %[[ZERO1]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
+// CHECK-NEXT: "qpu.return"(%[[RESULT0]], %[[RESULT1]], %[[RESULT2]]) : (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>) -> ()
+// CHECK-NEXT: }) : () -> ()
+// CHECK-NEXT: }
+// CHECK-NEXT: func.func @qasm_main() -> (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>) {
+// CHECK-NEXT: %[[EMPTY0:.*]] = tensor.empty() : tensor<1xi1>
+// CHECK-NEXT: %[[EMPTY1:.*]] = tensor.empty() : tensor<1xi1>
+// CHECK-NEXT: %[[EMPTY2:.*]] = tensor.empty() : tensor<1xi1>
+// CHECK-NEXT: %[[EXEC:.*]]:3 = qpu.execute @qasm_generated::@main ins () outs (%[[EMPTY0]] : tensor<1xi1>, %[[EMPTY1]] : tensor<1xi1>, %[[EMPTY2]] : tensor<1xi1>)
+// CHECK-NEXT: return %[[EXEC]]#0, %[[EXEC]]#1, %[[EXEC]]#2 : tensor<1xi1>, tensor<1xi1>, tensor<1xi1>
+// CHECK-NEXT: }
+// CHECK-NEXT: }
 
 OPENQASM 2.0;
 include "qelib1.inc";

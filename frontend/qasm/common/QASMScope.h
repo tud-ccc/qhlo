@@ -29,6 +29,9 @@ public:
     QuantumRegister* lookupQReg(llvm::StringRef name);
     ClassicalRegister* lookupCReg(llvm::StringRef name);
 
+    const llvm::StringMap<ClassicalRegister> &getCRegs() const
+    { return cregs_; }
+
     QuantumRegister &
     declareQReg(llvm::StringRef name, unsigned size, mlir::Value initialValue);
 

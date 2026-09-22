@@ -18,6 +18,7 @@
 #include <llvm/Support/LogicalResult.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Math/IR/Math.h>
+#include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/Diagnostics.h>
@@ -827,7 +828,93 @@ QASM2Visitor::visitGateStatement(qasm2Parser::GateStatementContext* ctx)
 
 std::any QASM2Visitor::visitMeasureArrowAssignmentStatement(
     qasm2Parser::MeasureArrowAssignmentStatementContext* ctx)
-{ return visitChildren(ctx); }
+{
+    auto* source = ctx->gateOperand(0)->indexedIdentifier();
+    auto* destination = ctx->gateOperand(1)->indexedIdentifier();
+    const std::string quantumName = source->Identifier()->getText();
+    const std::string classicalName = destination->Identifier()->getText();
+    auto* qreg = scope.lookupQReg(quantumName);
+    auto* creg = scope.lookupCReg(classicalName);
+    if (!qreg) {
+        error(ctx, "unknown quantum register '" + quantumName + "'");
+        return {};
+    }
+    if (!creg) {
+        error(ctx, "unknown classical register '" + classicalName + "'");
+        return {};
+    }
+
+    unsigned quantumOffset = 0, classicalOffset = 0;
+    unsigned quantumSize = qreg->size, classicalSize = creg->size;
+    if (auto* designator = source->designator()) {
+        auto index = parseUnsigned(designator->DecimalIntegerLiteral(), ctx);
+        if (!index || *index >= qreg->size) {
+            error(ctx, "invalid or out-of-range qubit index");
+            return {};
+        }
+        quantumOffset = *index;
+        quantumSize = 1;
+    }
+    if (auto* designator = destination->designator()) {
+        auto index = parseUnsigned(designator->DecimalIntegerLiteral(), ctx);
+        if (!index || *index >= creg->size) {
+            error(ctx, "invalid or out-of-range classical bit index");
+            return {};
+        }
+        classicalOffset = *index;
+        classicalSize = 1;
+    }
+    if (quantumSize != classicalSize) {
+        error(ctx, "measurement source and destination sizes must match");
+        return {};
+    }
+
+    const auto loc = getLocation(ctx);
+    auto bitType = builder.getI1Type();
+    if (!creg->value) {
+        auto registerType = mlir::RankedTensorType::get({creg->size}, bitType);
+        creg->value = mlir::arith::ConstantOp::create(
+            builder,
+            loc,
+            registerType,
+            mlir::DenseElementsAttr::get(
+                registerType,
+                builder.getBoolAttr(false)));
+    }
+
+    auto measurementType = mlir::quantum::MeasurementType::get(&context, 1);
+    auto tensorType = mlir::RankedTensorType::get({1}, bitType);
+    for (unsigned i = 0; i < quantumSize; ++i) {
+        const unsigned index = quantumOffset + i;
+        auto qubit = scope.materializeQubit(*qreg, index, builder, loc);
+        auto measurement = mlir::quantum::MeasureOp::create(
+            builder,
+            loc,
+            measurementType,
+            qubit.getType(),
+            qubit);
+        qreg->intervals.lookup(index).value = measurement.getResult();
+        auto result = mlir::quantum::ToTensorOp::create(
+            builder,
+            loc,
+            tensorType,
+            measurement.getMeasurement());
+        creg->value = mlir::tensor::InsertSliceOp::create(
+            builder,
+            loc,
+            result.getResult(),
+            creg->value,
+            llvm::ArrayRef<mlir::OpFoldResult>{
+                builder.getIndexAttr(classicalOffset + i)},
+            llvm::ArrayRef<mlir::OpFoldResult>{builder.getIndexAttr(1)},
+            llvm::ArrayRef<mlir::OpFoldResult>{builder.getIndexAttr(1)});
+    }
+    return {};
+}
+
+// ################################################################################
+// # Reset and Barrier
+// #################################################################################
 
 std::any
 QASM2Visitor::visitResetStatement(qasm2Parser::ResetStatementContext* ctx)
@@ -857,6 +944,10 @@ std::any
 QASM2Visitor::visitBarrierStatement(qasm2Parser::BarrierStatementContext* ctx)
 { return visitChildren(ctx); }
 
+// ################################################################################
+// # Opaque (currently not supported)
+// #################################################################################
+
 std::any QASM2Visitor::visitOpaqueDeclarationStatement(
     qasm2Parser::OpaqueDeclarationStatementContext* ctx)
 { return visitChildren(ctx); }
@@ -865,7 +956,6 @@ std::any QASM2Visitor::visitOpaqueDeclarationStatement(
 // # Controlflow
 // #################################################################################
 
-std::any QASM2Visitor::visitIfStatement(qasm2Parser::IfStatementContext* ctx)
-{ return visitChildren(ctx); }
+std::any QASM2Visitor::visitIfStatement(qasm2Parser::IfStatementContext* ctx) {}
 
 } // namespace quantum::frontend

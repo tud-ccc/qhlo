@@ -107,7 +107,9 @@ add_mlir_library(QuantumQASM2Frontend
         QuantumQASMCommon
         QuantumIR
         MLIRArithDialect
+        MLIRFuncDialect
         MLIRMathDialect
+        MLIRTensorDialect
         MLIRIR
         MLIRSupport
         LLVMSupport

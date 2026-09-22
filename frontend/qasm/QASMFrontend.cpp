@@ -10,6 +10,7 @@
 #include "quantum-mlir/Dialect/QPU/IR/QPUBase.h"
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumBase.h"
 
+#include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/IR/Diagnostics.h>
@@ -61,7 +62,8 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM(
         mlir::qpu::QPUDialect,
         mlir::tensor::TensorDialect,
         mlir::arith::ArithDialect,
-        mlir::scf::SCFDialect>();
+        mlir::scf::SCFDialect,
+        mlir::func::FuncDialect>();
 
     switch (detectQASMVersion(source)) {
     case QASMVersion::QASM2: return parseQASM2(source, filename, context);
