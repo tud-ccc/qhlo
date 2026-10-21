@@ -57,7 +57,7 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM2(
     QASMScope scope;
     GateLibrary gateLibrary;
     QASMIncludeResolver includeResolver;
-    qasm2::QASM2TranslationUnit translationUnit;
+    QASM2TranslationUnit translationUnit;
 
     includeResolver.addBuiltin(
         "qelib1.inc",
@@ -69,7 +69,7 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM2(
 
     auto* program = rootSource.parseProgram();
 
-    if (rootSource.failed()) return {};
+    if (!program) return {};
 
     QASM2Visitor visitor(
         context,

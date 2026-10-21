@@ -69,7 +69,8 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM(
     case QASMVersion::QASM2:
         return qasm2::parseQASM2(source, filename, context);
 
-    case QASMVersion::QASM3: return parseQASM3(source, filename, context);
+    case QASMVersion::QASM3:
+        return qasm3::parseQASM3(source, filename, context);
 
     case QASMVersion::Unknown:
         mlir::emitError(mlir::FileLineColLoc::get(&context, filename, 1, 1))

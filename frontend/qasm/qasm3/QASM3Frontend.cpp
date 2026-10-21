@@ -5,12 +5,50 @@
 
 #include "QASM3Frontend.h"
 
-mlir::OwningOpRef<mlir::ModuleOp> quantum::frontend::parseQASM3(
+#include "QASM3Visitor.h"
+#include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
+#include "quantum-mlir/Dialect/Quantum/IR/QuantumOps.h"
+
+#include <antlr4-runtime.h>
+#include <llvm/ADT/SmallVector.h>
+#include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Dialect/SCF/IR/SCF.h>
+#include <mlir/Dialect/Tensor/IR/Tensor.h>
+#include <mlir/IR/Builders.h>
+#include <mlir/IR/BuiltinTypes.h>
+#include <mlir/IR/Diagnostics.h>
+#include <mlir/IR/Location.h>
+
+mlir::OwningOpRef<mlir::ModuleOp> quantum::frontend::qasm3::parseQASM3(
     llvm::StringRef,
     llvm::StringRef filename,
     mlir::MLIRContext &context)
 {
-    mlir::emitError(mlir::FileLineColLoc::get(&context, filename, 1, 1))
-        << "OpenQASM 3 frontend is not implemented";
-    return {};
+    auto moduleLoc = mlir::FileLineColLoc::get(&context, filename, 1, 1);
+
+    mlir::OwningOpRef<mlir::ModuleOp> module =
+        mlir::ModuleOp::create(moduleLoc);
+
+    mlir::OpBuilder builder(&context);
+    builder.setInsertionPointToEnd(module->getBody());
+    auto qpuModule = mlir::qpu::QPUModuleOp::create(
+        builder,
+        moduleLoc,
+        {},
+        "qasm_generated",
+        mlir::ArrayAttr{});
+    qpuModule.getBodyRegion().emplaceBlock();
+
+    builder.setInsertionPointToEnd(qpuModule.getBody());
+    auto ty = mlir::FunctionType::get(&context, {}, {});
+    auto mainCircuit = mlir::qpu::CircuitOp::create(
+        builder,
+        moduleLoc,
+        "main",
+        ty,
+        mlir::ArrayRef<mlir::NamedAttribute>{});
+    mainCircuit.getBody().emplaceBlock();
+
+    return module;
 }

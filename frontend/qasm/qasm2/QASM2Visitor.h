@@ -23,9 +23,6 @@
 
 namespace quantum::frontend::qasm2 {
 
-using qasm2::qasm2Parser;
-using qasm2::qasm2ParserBaseVisitor;
-
 struct QuantumOperand {
     QASMScope::QuantumRegister* reg;
     std::optional<unsigned> index;

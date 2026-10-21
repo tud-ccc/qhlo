@@ -6,18 +6,17 @@
 #ifndef QUANTUM_MLIR_FRONTEND_QASM_QASM3_QASM3FRONTEND_H
 #define QUANTUM_MLIR_FRONTEND_QASM_QASM3_QASM3FRONTEND_H
 
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/OwningOpRef.h"
+#include <llvm/ADT/StringRef.h>
+#include <mlir/IR/BuiltinOps.h>
+#include <mlir/IR/OwningOpRef.h>
 
-#include "llvm/ADT/StringRef.h"
-
-namespace quantum::frontend {
+namespace quantum::frontend::qasm3 {
 
 mlir::OwningOpRef<mlir::ModuleOp> parseQASM3(
     llvm::StringRef source,
     llvm::StringRef filename,
     mlir::MLIRContext &context);
 
-} // namespace quantum::frontend
+} // namespace quantum::frontend::qasm3
 
 #endif // QUANTUM_MLIR_FRONTEND_QASM_QASM3_QASM3FRONTEND_H
