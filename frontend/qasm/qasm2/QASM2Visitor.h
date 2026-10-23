@@ -100,7 +100,7 @@ private:
     QASMScope &scope;
     GateLibrary &gateLibrary;
     QASMIncludeResolver &includeResolver;
-    qasm2::QASM2TranslationUnit &translationUnit;
+    QASM2TranslationUnit &translationUnit;
 
     bool hadError = false;
 };

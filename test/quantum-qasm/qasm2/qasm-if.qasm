@@ -1,49 +1,5 @@
 // RUN: quantum-qasm %s | FileCheck %s
 
-//CHECK: module {
-//CHECK:   qpu.module @qasm_generated {
-//CHECK:     "qpu.circuit"() <{function_type = () -> tensor<1xi1>, sym_name = "main"}> ({
-//CHECK:       %[[QUBIT:.+]] = "quantum.alloc"() : () -> !quantum.qubit<1>
-//CHECK:       %[[CST:.+]] = arith.constant dense<false> : tensor<1xi1>
-//CHECK:       %[[MEAS:.+]], %[[RES:.+]] = "quantum.measure"(%[[QUBIT]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-//CHECK:       %[[TENSOR:.+]] = "quantum.to_tensor"(%[[MEAS]]) : (!quantum.measurement<1>) -> tensor<1xi1>
-//CHECK:       %[[INSERTED:.+]] = tensor.insert_slice %[[TENSOR]] into %[[CST]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
-//CHECK:       %[[CST0:.+]] = arith.constant dense<false> : tensor<1xi1>
-//CHECK:       %[[CMP0:.+]] = arith.cmpi eq, %[[INSERTED]], %[[CST0]] : tensor<1xi1>
-//CHECK:       %[[IDX0:.+]] = arith.constant 0 : index
-//CHECK:       %[[EXTRACT0:.+]] = tensor.extract %[[CMP0]][%[[IDX0]]] : tensor<1xi1>
-//CHECK:       %[[GAMMA0:.+]] = scf.if %[[EXTRACT0]] -> (!quantum.qubit<1>) {
-//CHECK:           %[[X0:.+]] = "quantum.X"(%[[RES]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
-//CHECK:           scf.yield %[[X0]] : !quantum.qubit<1>
-//CHECK:       } else {
-//CHECK:           scf.yield %[[RES]] : !quantum.qubit<1>
-//CHECK:       }
-//CHECK:       %[[CST1:.+]] = arith.constant dense<false> : tensor<1xi1>
-//CHECK:       %[[CMP1:.+]] = arith.cmpi eq, %[[INSERTED]], %[[CST1]] : tensor<1xi1>
-//CHECK:       %[[IDX1:.+]] = arith.constant 0 : index
-//CHECK:       %[[EXTRACT1:.+]] = tensor.extract %[[CMP1]][%[[IDX1]]] : tensor<1xi1>
-//CHECK:       %[[GAMMA1:.+]] = scf.if %[[EXTRACT1]] -> (!quantum.qubit<1>) {
-//CHECK:           %[[X1:.+]] = "quantum.X"(%[[GAMMA0]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
-//CHECK:           scf.yield %[[X1]] : !quantum.qubit<1>
-//CHECK:       } else {
-//CHECK:           scf.yield %[[GAMMA0]] : !quantum.qubit<1>
-//CHECK:       }
-//CHECK:       %[[MEAS2:.+]], %[[RES2:.+]] = "quantum.measure"(%[[GAMMA1]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-//CHECK:       %[[TENSOR2:.+]] = "quantum.to_tensor"(%[[MEAS2]]) : (!quantum.measurement<1>) -> tensor<1xi1>
-//CHECK:       %[[INSERTED2:.+]] = tensor.insert_slice %[[TENSOR2]] into %[[INSERTED]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
-//CHECK:       %[[RESET:.+]] = "quantum.reset"(%[[RES2]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
-//CHECK:       "quantum.deallocate"(%[[RESET]]) : (!quantum.qubit<1>) -> ()
-//CHECK:       "qpu.return"(%[[INSERTED2]]) : (tensor<1xi1>) -> ()
-//CHECK:     }) : () -> ()
-//CHECK:   }
-//CHECK:   func.func @qasm_main() -> tensor<1xi1> {
-//CHECK:     %[[EMPTY:.+]] = tensor.empty() : tensor<1xi1>
-//CHECK:     %[[RES:.+]] = qpu.execute @qasm_generated::@main ins () outs (%[[EMPTY]] : tensor<1xi1>)
-//CHECK:     return %[[RES]] : tensor<1xi1>
-//CHECK:   }
-//CHECK: }
-
-
 OPENQASM 2.0;
 include "qelib1.inc";
 qreg q[1];
@@ -53,3 +9,47 @@ if(c==0) x q[0];
 if(c==0) x q[0];
 measure q[0] -> c[0];
 reset q[0];
+
+// Check the complete operation sequence and SSA wiring.
+// CHECK-LABEL: module {
+// CHECK-NEXT:         qpu.module @"qasm-if" {
+// CHECK-NEXT:           "qpu.circuit"() <{function_type = () -> tensor<1xi1>, sym_name = "main"}> ({
+// CHECK-NEXT:             %[[VAL_0:.*]] = "quantum.alloc"() : () -> !quantum.qubit<1>
+// CHECK-NEXT:             %[[CONSTANT_0:.*]] = arith.constant dense<false> : tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_1:.*]], %[[VAL_2:.*]] = "quantum.measure"(%[[VAL_0]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
+// CHECK-NEXT:             %[[VAL_3:.*]] = "quantum.to_tensor"(%[[VAL_1]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[INSERT_SLICE_0:.*]] = tensor.insert_slice %[[VAL_3]] into %[[CONSTANT_0]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
+// CHECK-NEXT:             %[[CONSTANT_1:.*]] = arith.constant dense<false> : tensor<1xi1>
+// CHECK-NEXT:             %[[CMPI_0:.*]] = arith.cmpi eq, %[[INSERT_SLICE_0]], %[[CONSTANT_1]] : tensor<1xi1>
+// CHECK-NEXT:             %[[CONSTANT_2:.*]] = arith.constant 0 : index
+// CHECK-NEXT:             %[[EXTRACT_0:.*]] = tensor.extract %[[CMPI_0]]{{\[}}%[[CONSTANT_2]]] : tensor<1xi1>
+// CHECK-NEXT:             %[[IF_0:.*]] = scf.if %[[EXTRACT_0]] -> (!quantum.qubit<1>) {
+// CHECK-NEXT:               %[[VAL_4:.*]] = "quantum.X"(%[[VAL_2]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+// CHECK-NEXT:               scf.yield %[[VAL_4]] : !quantum.qubit<1>
+// CHECK-NEXT:             } else {
+// CHECK-NEXT:               scf.yield %[[VAL_2]] : !quantum.qubit<1>
+// CHECK-NEXT:             }
+// CHECK-NEXT:             %[[CONSTANT_3:.*]] = arith.constant dense<false> : tensor<1xi1>
+// CHECK-NEXT:             %[[CMPI_1:.*]] = arith.cmpi eq, %[[INSERT_SLICE_0]], %[[CONSTANT_3]] : tensor<1xi1>
+// CHECK-NEXT:             %[[CONSTANT_4:.*]] = arith.constant 0 : index
+// CHECK-NEXT:             %[[EXTRACT_1:.*]] = tensor.extract %[[CMPI_1]]{{\[}}%[[CONSTANT_4]]] : tensor<1xi1>
+// CHECK-NEXT:             %[[IF_1:.*]] = scf.if %[[EXTRACT_1]] -> (!quantum.qubit<1>) {
+// CHECK-NEXT:               %[[VAL_5:.*]] = "quantum.X"(%[[IF_0]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+// CHECK-NEXT:               scf.yield %[[VAL_5]] : !quantum.qubit<1>
+// CHECK-NEXT:             } else {
+// CHECK-NEXT:               scf.yield %[[IF_0]] : !quantum.qubit<1>
+// CHECK-NEXT:             }
+// CHECK-NEXT:             %[[VAL_6:.*]], %[[VAL_7:.*]] = "quantum.measure"(%[[IF_1]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
+// CHECK-NEXT:             %[[VAL_8:.*]] = "quantum.to_tensor"(%[[VAL_6]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[INSERT_SLICE_1:.*]] = tensor.insert_slice %[[VAL_8]] into %[[INSERT_SLICE_0]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_9:.*]] = "quantum.reset"(%[[VAL_7]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+// CHECK-DAG:             "quantum.deallocate"(%[[VAL_9]]) : (!quantum.qubit<1>) -> ()
+// CHECK-NEXT:             "qpu.return"(%[[INSERT_SLICE_1]]) : (tensor<1xi1>) -> ()
+// CHECK-NEXT:           }) : () -> ()
+// CHECK-NEXT:         }
+// CHECK-NEXT:         func.func @qasm_main() -> tensor<1xi1> {
+// CHECK-NEXT:           %[[EMPTY_0:.*]] = tensor.empty() : tensor<1xi1>
+// CHECK-NEXT:           %[[EXECUTE_0:.*]] = qpu.execute @"qasm-if"::@main ins () outs (%[[EMPTY_0]] : tensor<1xi1>)
+// CHECK-NEXT:           return %[[EXECUTE_0]] : tensor<1xi1>
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }

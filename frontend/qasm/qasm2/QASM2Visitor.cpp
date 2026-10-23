@@ -941,7 +941,58 @@ QASM2Visitor::visitResetStatement(qasm2Parser::ResetStatementContext* ctx)
 
 std::any
 QASM2Visitor::visitBarrierStatement(qasm2Parser::BarrierStatementContext* ctx)
-{ return visitChildren(ctx); }
+{
+    llvm::SmallVector<QuantumOperand> requests;
+    const auto loc = getLocation(ctx);
+    for (auto* operand : ctx->gateOperandList()->gateOperand()) {
+        auto* indexed = operand->indexedIdentifier();
+        const auto name = indexed->Identifier()->getText();
+        auto* reg = scope.lookupQReg(name);
+        if (!reg) {
+            error(ctx, "unknown quantum register '" + name + "'");
+            return {};
+        }
+
+        std::optional<unsigned> index;
+        if (auto* designator = indexed->designator()) {
+            index = parseUnsigned(designator->DecimalIntegerLiteral(), ctx);
+            if (!index) return {};
+            if (*index >= reg->size) {
+                error(ctx, "invalid or out-of-range qubit index");
+                return {};
+            }
+            scope.materializeQubit(*reg, *index, builder, loc);
+        }
+        requests.push_back({reg, index, {}});
+    }
+
+    // Collect values after all indexed operands have split their registers.
+    // Keep existing register intervals intact and include overlapping operands
+    // only once so each qubit has a single input and output at the barrier.
+    llvm::SmallVector<QuantumOperand> operands;
+    for (const auto &request : requests) {
+        for (const auto &interval : request.reg->intervals.intervals()) {
+            if (request.index && interval.start != *request.index) continue;
+            if (llvm::any_of(operands, [&](const QuantumOperand &existing) {
+                    return existing.reg == request.reg
+                           && existing.index == interval.start;
+                }))
+                continue;
+            operands.push_back({request.reg, interval.start, interval.value});
+        }
+    }
+
+    llvm::SmallVector<mlir::Value> values;
+    llvm::SmallVector<mlir::Type> types;
+    for (const auto &operand : operands) {
+        values.push_back(operand.value);
+        types.push_back(operand.value.getType());
+    }
+    auto barrier =
+        mlir::quantum::BarrierOp::create(builder, loc, types, values);
+    writeQuantumResult(operands, barrier->getResults());
+    return {};
+}
 
 // ################################################################################
 // # Opaque (currently not supported)
