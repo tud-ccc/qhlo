@@ -533,6 +533,9 @@ QASM2Visitor::resolveClassicExpression(qasm2Parser::ExpressionContext* ctx)
 
     if (auto* literal = dynamic_cast<Parser::LiteralExpressionContext*>(ctx)) {
         if (literal->Identifier()) {
+            if (auto* parameter =
+                    scope.lookupCReg(literal->Identifier()->getText()))
+                return parameter->value;
             error(
                 ctx,
                 "unknown parameter '" + literal->Identifier()->getText() + "'");
@@ -728,6 +731,11 @@ QASM2Visitor::visitGateCallStatement(qasm2Parser::GateCallStatementContext* ctx)
                 gateBlock.addArgument(type, getLocation(ctx));
 
             QASMScope gateScope;
+            for (auto [index, name] : llvm::enumerate(gate->parameters))
+                gateScope.declareCReg(
+                    name,
+                    1,
+                    gateBlock.getArgument(gate->qubits.size() + index));
             for (auto [index, name] : llvm::enumerate(gate->qubits))
                 gateScope.declareQReg(name, 1, gateBlock.getArgument(index));
 
