@@ -86,7 +86,6 @@ private:
     std::optional<QuantumOperand>
     resolveQuantumOperand(qasm2Parser::GateOperandContext* ctx);
 
-    mlir::Value resolveExpression(qasm2Parser::ExpressionContext* ctx);
     mlir::Value resolveClassicExpression(qasm2Parser::ExpressionContext* ctx);
 
     mlir::MLIRContext &context;
