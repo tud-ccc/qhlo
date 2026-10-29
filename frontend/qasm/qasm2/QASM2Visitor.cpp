@@ -352,9 +352,7 @@ std::any QASM2Visitor::visitOldStyleDeclarationStatement(
     auto size = parseUnsigned(ctx->designator()->DecimalIntegerLiteral(), ctx);
 
     if (!size || *size == 0) {
-        mlir::emitError(
-            getLocation(ctx),
-            "register size must be greater than zero");
+        error(ctx, "register size must be greater than zero");
         return {};
     }
 
@@ -371,9 +369,12 @@ std::any QASM2Visitor::visitOldStyleDeclarationStatement(
         return {};
     }
 
-    assert(ctx->CREG());
+    if (ctx->CREG()) {
+        scope.declareCReg(name, *size, mlir::Value{});
+        return {};
+    }
 
-    scope.declareCReg(name, *size, mlir::Value{});
+    error(ctx, "Expected declaration of QREG or CREG");
 
     return {};
 }
