@@ -18,6 +18,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "quantum-mlir/Dialect/QILLR/IR/QILLR.h"
 #include "quantum-mlir/Dialect/QILLR/IR/QILLROps.h"
+#include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
 
 #include <cstdint>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
@@ -232,15 +233,24 @@ private:
     AllocationAnalysis &analysis;
 };
 
-struct ReadMeasurementOpPattern
-        : public ConvertOpToLLVMPattern<qillr::ReadMeasurementOp> {
+struct ToBitsOpPattern : public ConvertOpToLLVMPattern<qpu::ToBitsOp> {
     using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
 
     LogicalResult matchAndRewrite(
-        ReadMeasurementOp op,
-        ReadMeasurementOpAdaptor adaptor,
+        qpu::ToBitsOp op,
+        qpu::ToBitsOpAdaptor adaptor,
         ConversionPatternRewriter &rewriter) const override
     {
+        if (!llvm::isa<qillr::ResultType>(op.getSrc().getType()))
+            return rewriter.notifyMatchFailure(op, "requires a QILLR result");
+        auto tensorType =
+            llvm::dyn_cast<RankedTensorType>(op.getDst().getType());
+        if (!tensorType || !tensorType.hasStaticShape()
+            || tensorType.getNumElements() != 1)
+            return rewriter.notifyMatchFailure(
+                op,
+                "QIR lowering currently requires a single-bit tensor");
+
         const StringRef qirName = "__quantum__qis__read_result__body";
         Type ptrType = LLVM::LLVMPointerType::get(getContext());
         Type i1Type = rewriter.getI1Type();
@@ -249,10 +259,9 @@ struct ReadMeasurementOpPattern
 
         LLVM::LLVMFuncOp fnDecl =
             ensureFunctionDeclaration(rewriter, op, qirName, qirSignature);
-        // Get the qubit argument from the operation
-        Value inputResult = adaptor.getInput();
+        Value inputResult = adaptor.getSrc();
 
-        // Create the call operation to apply the Hadamard gate
+        // Read the result bit and preserve the tensor-valued snapshot.
         auto measureOp = LLVM::CallOp::create(
             rewriter,
             op.getLoc(),
@@ -260,7 +269,10 @@ struct ReadMeasurementOpPattern
             fnDecl.getSymName(),
             ValueRange{inputResult});
 
-        rewriter.replaceOp(op, measureOp);
+        rewriter.replaceOpWithNewOp<tensor::FromElementsOp>(
+            op,
+            tensorType,
+            ValueRange{measureOp.getResult()});
 
         return success();
     }
@@ -1049,7 +1061,10 @@ void ConvertQILLRToLLVMPass::runOnOperation()
         analysis);
 
     target.addIllegalDialect<qillr::QILLRDialect>();
-    target.addLegalDialect<LLVM::LLVMDialect>();
+    target.addLegalDialect<LLVM::LLVMDialect, tensor::TensorDialect>();
+    target.addDynamicallyLegalOp<qpu::ToBitsOp>([](qpu::ToBitsOp op) {
+        return !llvm::isa<qillr::ResultType>(op.getSrc().getType());
+    });
 
     if (failed(applyPartialConversion(
             getOperation(),
@@ -1091,7 +1106,7 @@ void mlir::qillr::populateConvertQILLRToLLVMPatterns(
         TdgOpPattern,
         BarrierOpPattern,
         MeasureOpPattern,
-        ReadMeasurementOpPattern,
+        ToBitsOpPattern,
         ResetOpPattern,
         DeallocateOpPattern>(typeConverter);
 

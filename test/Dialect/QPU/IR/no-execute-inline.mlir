@@ -6,7 +6,7 @@ qpu.module @test {
         ^bb0():
         %q = "quantum.alloc"() : () -> (!quantum.qubit<1>)
         %m, %qm = "quantum.measure"(%q) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-        %mt = "quantum.to_tensor"(%m) : (!quantum.measurement<1>) -> (tensor<1xi1>)
+        %mt = "qpu.to_bits"(%m) : (!quantum.measurement<1>) -> (tensor<1xi1>)
         "quantum.deallocate"(%qm) : (!quantum.qubit<1>) -> ()
         "qpu.return"(%mt) : (tensor<1xi1>) -> ()
     }) : () -> ()

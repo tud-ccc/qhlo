@@ -5,6 +5,7 @@ add_mlir_conversion_library(QuantumToQILLR
         ConversionIncGen
 
     LINK_LIBS PUBLIC
+        QPUIR
         MLIRFuncTransforms
         MLIRSCFTransforms
         MLIRTensorDialect

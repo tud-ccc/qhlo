@@ -902,7 +902,7 @@ std::any QASM2Visitor::visitMeasureArrowAssignmentStatement(
             qubit.getType(),
             qubit);
         qreg->intervals.lookup(index).value = measurement.getResult();
-        auto result = mlir::quantum::ToTensorOp::create(
+        auto result = mlir::qpu::ToBitsOp::create(
             builder,
             loc,
             tensorType,

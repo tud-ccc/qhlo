@@ -17,7 +17,7 @@ reset q[0];
 // CHECK-NEXT:             %[[VAL_0:.*]] = "quantum.alloc"() : () -> !quantum.qubit<1>
 // CHECK-NEXT:             %[[CONSTANT_0:.*]] = arith.constant dense<false> : tensor<1xi1>
 // CHECK-NEXT:             %[[VAL_1:.*]], %[[VAL_2:.*]] = "quantum.measure"(%[[VAL_0]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_3:.*]] = "quantum.to_tensor"(%[[VAL_1]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_3:.*]] = "qpu.to_bits"(%[[VAL_1]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[INSERT_SLICE_0:.*]] = tensor.insert_slice %[[VAL_3]] into %[[CONSTANT_0]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
 // CHECK-NEXT:             %[[CONSTANT_1:.*]] = arith.constant dense<false> : tensor<1xi1>
 // CHECK-NEXT:             %[[CMPI_0:.*]] = arith.cmpi eq, %[[INSERT_SLICE_0]], %[[CONSTANT_1]] : tensor<1xi1>
@@ -40,7 +40,7 @@ reset q[0];
 // CHECK-NEXT:               scf.yield %[[IF_0]] : !quantum.qubit<1>
 // CHECK-NEXT:             }
 // CHECK-NEXT:             %[[VAL_6:.*]], %[[VAL_7:.*]] = "quantum.measure"(%[[IF_1]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_8:.*]] = "quantum.to_tensor"(%[[VAL_6]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_8:.*]] = "qpu.to_bits"(%[[VAL_6]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[INSERT_SLICE_1:.*]] = tensor.insert_slice %[[VAL_8]] into %[[INSERT_SLICE_0]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
 // CHECK-NEXT:             %[[VAL_9:.*]] = "quantum.reset"(%[[VAL_7]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK-DAG:             "quantum.deallocate"(%[[VAL_9]]) : (!quantum.qubit<1>) -> ()

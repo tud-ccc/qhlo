@@ -6,6 +6,7 @@
 
 #include "mlir/IR/Types.h"
 #include "quantum-mlir/Dialect/QILLR/IR/QILLRAttributes.h"
+#include "quantum-mlir/Dialect/QPU/Interfaces/MeasurementSourceInterface.h"
 
 //===- Generated includes -------------------------------------------------===//
 

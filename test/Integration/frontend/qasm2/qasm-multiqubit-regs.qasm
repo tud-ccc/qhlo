@@ -21,7 +21,7 @@ reset q[1];
 // CHECK-NEXT:             %[[VAL_0:.*]] = "qillr.alloc"() <{size = 2 : i64}> : () -> !qillr.qubit
 // CHECK-NEXT:             %[[VAL_1:.*]] = "qillr.ralloc"() <{size = 1 : i64}> : () -> !qillr.result
 // CHECK-NEXT:             "qillr.measure"(%[[VAL_0]], %[[VAL_1]]) <{inputIndex = [0], resultIndex = [0]}> : (!qillr.qubit, !qillr.result) -> ()
-// CHECK-NEXT:             %[[VAL_2:.*]] = "qillr.read_measurement"(%[[VAL_1]]) <{index = []}> : (!qillr.result) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_2:.*]] = "qpu.to_bits"(%[[VAL_1]]) : (!qillr.result) -> tensor<1xi1>
 // CHECK-NEXT:             %[[CMPI_0:.*]] = arith.cmpi eq, %[[VAL_2]], %[[CONSTANT_1]] : tensor<1xi1>
 // CHECK-NEXT:             %[[EXTRACT_0:.*]] = tensor.extract %[[CMPI_0]]{{\[}}%[[CONSTANT_0]]] : tensor<1xi1>
 // CHECK-NEXT:             scf.if %[[EXTRACT_0]] {
@@ -29,7 +29,7 @@ reset q[1];
 // CHECK-NEXT:             }
 // CHECK-NEXT:             %[[VAL_3:.*]] = "qillr.ralloc"() <{size = 1 : i64}> : () -> !qillr.result
 // CHECK-NEXT:             "qillr.measure"(%[[VAL_0]], %[[VAL_3]]) <{inputIndex = [1], resultIndex = [0]}> : (!qillr.qubit, !qillr.result) -> ()
-// CHECK-NEXT:             %[[VAL_4:.*]] = "qillr.read_measurement"(%[[VAL_3]]) <{index = []}> : (!qillr.result) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_4:.*]] = "qpu.to_bits"(%[[VAL_3]]) : (!qillr.result) -> tensor<1xi1>
 // CHECK-NEXT:             %[[CMPI_1:.*]] = arith.cmpi eq, %[[VAL_4]], %[[CONSTANT_1]] : tensor<1xi1>
 // CHECK-NEXT:             %[[EXTRACT_1:.*]] = tensor.extract %[[CMPI_1]]{{\[}}%[[CONSTANT_0]]] : tensor<1xi1>
 // CHECK-NEXT:             scf.if %[[EXTRACT_1]] {

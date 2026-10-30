@@ -20,11 +20,11 @@ module {
     // 2. Measure q0 and q1 to obtain classical bits m0 and m1.
     %r0 = "qillr.ralloc"() : () -> (!qillr.result)
     "qillr.measure"(%q0, %r0) : (!qillr.qubit, !qillr.result) -> ()
-    %m0_tensor = "qillr.read_measurement"(%r0) : (!qillr.result) -> tensor<1xi1>
+    %m0_tensor = "qpu.to_bits"(%r0) : (!qillr.result) -> tensor<1xi1>
     
     %r1 = "qillr.ralloc"() : () -> (!qillr.result)
     "qillr.measure"(%q1, %r1) : (!qillr.qubit, !qillr.result) -> ()
-    %m1_tensor = "qillr.read_measurement"(%r1) : (!qillr.result) -> tensor<1xi1>
+    %m1_tensor = "qpu.to_bits"(%r1) : (!qillr.result) -> tensor<1xi1>
 
     // Create an index constant for extraction
     %c0 = arith.constant 0 : index
@@ -45,7 +45,7 @@ module {
     // Measure the corrected qubit (q2_final) to verify teleportation.
     %r2 = "qillr.ralloc"() : () -> (!qillr.result)
     "qillr.measure"(%q2, %r2) : (!qillr.qubit, !qillr.result) -> ()
-    %final_tensor = "qillr.read_measurement"(%r2) : (!qillr.result) -> tensor<1xi1>
+    %final_tensor = "qpu.to_bits"(%r2) : (!qillr.result) -> tensor<1xi1>
     %final = tensor.extract %final_tensor[%c0] : tensor<1xi1>
 
     // Return two classical bits for demonstration:

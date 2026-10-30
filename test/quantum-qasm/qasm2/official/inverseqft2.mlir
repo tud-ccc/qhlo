@@ -14,7 +14,7 @@
 // CHECK-NEXT:             %[[VAL_4:.*]] = "quantum.H"(%[[VAL_3]]#0) : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK-NEXT:             %[[CONSTANT_0:.*]] = arith.constant dense<false> : tensor<1xi1>
 // CHECK-NEXT:             %[[VAL_5:.*]], %[[VAL_6:.*]] = "quantum.measure"(%[[VAL_4]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_7:.*]] = "quantum.to_tensor"(%[[VAL_5]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_7:.*]] = "qpu.to_bits"(%[[VAL_5]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[INSERT_SLICE_0:.*]] = tensor.insert_slice %[[VAL_7]] into %[[CONSTANT_0]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
 // CHECK-NEXT:             %[[CONSTANT_1:.*]] = arith.constant dense<true> : tensor<1xi1>
 // CHECK-NEXT:             %[[CMPI_0:.*]] = arith.cmpi eq, %[[INSERT_SLICE_0]], %[[CONSTANT_1]] : tensor<1xi1>
@@ -33,7 +33,7 @@
 // CHECK-NEXT:             %[[VAL_10:.*]] = "quantum.H"(%[[VAL_11:.*]]#1) : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK-NEXT:             %[[CONSTANT_5:.*]] = arith.constant dense<false> : tensor<1xi1>
 // CHECK-NEXT:             %[[VAL_12:.*]], %[[VAL_13:.*]] = "quantum.measure"(%[[VAL_10]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_14:.*]] = "quantum.to_tensor"(%[[VAL_12]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_14:.*]] = "qpu.to_bits"(%[[VAL_12]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[INSERT_SLICE_1:.*]] = tensor.insert_slice %[[VAL_14]] into %[[CONSTANT_5]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
 // CHECK-NEXT:             %[[CONSTANT_6:.*]] = arith.constant dense<true> : tensor<1xi1>
 // CHECK-NEXT:             %[[CMPI_1:.*]] = arith.cmpi eq, %[[INSERT_SLICE_0]], %[[CONSTANT_6]] : tensor<1xi1>
@@ -65,7 +65,7 @@
 // CHECK-NEXT:             %[[VAL_20:.*]] = "quantum.H"(%[[VAL_21:.*]]#2) : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK-NEXT:             %[[CONSTANT_14:.*]] = arith.constant dense<false> : tensor<1xi1>
 // CHECK-NEXT:             %[[VAL_22:.*]], %[[VAL_23:.*]] = "quantum.measure"(%[[VAL_20]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_24:.*]] = "quantum.to_tensor"(%[[VAL_22]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_24:.*]] = "qpu.to_bits"(%[[VAL_22]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[INSERT_SLICE_2:.*]] = tensor.insert_slice %[[VAL_24]] into %[[CONSTANT_14]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
 // CHECK-NEXT:             %[[CONSTANT_15:.*]] = arith.constant dense<true> : tensor<1xi1>
 // CHECK-NEXT:             %[[CMPI_3:.*]] = arith.cmpi eq, %[[INSERT_SLICE_0]], %[[CONSTANT_15]] : tensor<1xi1>
@@ -109,7 +109,7 @@
 // CHECK-NEXT:             %[[VAL_32:.*]] = "quantum.H"(%[[VAL_33:.*]]#3) : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK-NEXT:             %[[CONSTANT_27:.*]] = arith.constant dense<false> : tensor<1xi1>
 // CHECK-NEXT:             %[[VAL_34:.*]], %[[VAL_35:.*]] = "quantum.measure"(%[[VAL_32]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_36:.*]] = "quantum.to_tensor"(%[[VAL_34]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_36:.*]] = "qpu.to_bits"(%[[VAL_34]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[INSERT_SLICE_3:.*]] = tensor.insert_slice %[[VAL_36]] into %[[CONSTANT_27]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
 // CHECK-DAG:             "quantum.deallocate"(%[[VAL_33]]#0) : (!quantum.qubit<1>) -> ()
 // CHECK-DAG:             "quantum.deallocate"(%[[VAL_33]]#1) : (!quantum.qubit<1>) -> ()

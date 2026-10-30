@@ -10,3 +10,5 @@ add_custom_target(QPUIncGen)
 add_subdirectory(IR)
 # Passes
 add_subdirectory(Transforms)
+
+add_subdirectory(Interfaces)

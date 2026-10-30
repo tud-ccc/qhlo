@@ -54,8 +54,8 @@ module {
       "qillr.measure"(%q1, %res1) : (!qillr.qubit, !qillr.result) -> ()
 
       // Convert measurement results to classical bits via tensor extraction
-      %m_out0_tensor = "qillr.read_measurement"(%res0) : (!qillr.result) -> tensor<1xi1>
-      %m_out1_tensor = "qillr.read_measurement"(%res1) : (!qillr.result) -> tensor<1xi1>
+      %m_out0_tensor = "qpu.to_bits"(%res0) : (!qillr.result) -> tensor<1xi1>
+      %m_out1_tensor = "qpu.to_bits"(%res1) : (!qillr.result) -> tensor<1xi1>
       %idx = arith.constant 0 : index
       %m_out0 = tensor.extract %m_out0_tensor[%idx] : tensor<1xi1>
       %m_out1 = tensor.extract %m_out1_tensor[%idx] : tensor<1xi1>

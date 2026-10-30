@@ -25,16 +25,16 @@
 // CHECK-COUNT-3: "quantum.CU1"(
 // CHECK: "quantum.H"(
 // CHECK: %[[M0:.*]], %[[Q0:.*]] = "quantum.measure"(
-// CHECK-NEXT: %[[T0:.*]] = "quantum.to_tensor"(%[[M0]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT: %[[T0:.*]] = "qpu.to_bits"(%[[M0]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT: %[[C0:.*]] = tensor.insert_slice %[[T0]] into %{{.*}}[0] [1] [1] : tensor<1xi1> into tensor<4xi1>
 // CHECK: %[[M1:.*]], %[[Q1:.*]] = "quantum.measure"(
-// CHECK-NEXT: %[[T1:.*]] = "quantum.to_tensor"(%[[M1]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT: %[[T1:.*]] = "qpu.to_bits"(%[[M1]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT: %[[C1:.*]] = tensor.insert_slice %[[T1]] into %{{.*}}[1] [1] [1] : tensor<1xi1> into tensor<4xi1>
 // CHECK: %[[M2:.*]], %[[Q2:.*]] = "quantum.measure"(
-// CHECK-NEXT: %[[T2:.*]] = "quantum.to_tensor"(%[[M2]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT: %[[T2:.*]] = "qpu.to_bits"(%[[M2]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT: %[[C2:.*]] = tensor.insert_slice %[[T2]] into %{{.*}}[2] [1] [1] : tensor<1xi1> into tensor<4xi1>
 // CHECK: %[[M3:.*]], %[[Q3:.*]] = "quantum.measure"(
-// CHECK-NEXT: %[[T3:.*]] = "quantum.to_tensor"(%[[M3]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT: %[[T3:.*]] = "qpu.to_bits"(%[[M3]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT: %[[C3:.*]] = tensor.insert_slice %[[T3]] into %{{.*}}[3] [1] [1] : tensor<1xi1> into tensor<4xi1>
 // CHECK: "quantum.deallocate"(
 // CHECK: "qpu.return"(%[[C3]]) : (tensor<4xi1>) -> ()

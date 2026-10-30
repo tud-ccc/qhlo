@@ -928,9 +928,4 @@ def Quantum_MeasureOp : Memory_Op<
     );
 }
 
-def Quantum_ToTensorOp : Quantum_Op<"to_tensor"> {
-  let arguments = (ins Quantum_MeasurementType:$src);
-  let results = (outs 1DTensorOf<[I1]>:$dst);
-}
-
 #endif // QUANTUM_OPS

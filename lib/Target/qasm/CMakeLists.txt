@@ -6,6 +6,7 @@ add_mlir_translation_library(QILLRToOpenQASM
     QILLRIR
 
     LINK_LIBS PUBLIC
+        QPUIR
     MLIRIR
     QILLRIR
     )

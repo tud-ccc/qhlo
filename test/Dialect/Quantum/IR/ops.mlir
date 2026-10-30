@@ -22,7 +22,7 @@ func.func @qubit_split_merge(%reg : !quantum.qubit<3>) -> (!quantum.qubit<3>) {
 
 func.func @qubit_measure_single(%reg : !quantum.qubit<1>) -> (tensor<1xi1>, !quantum.qubit<1>) {
     %m, %qm_single_out = "quantum.measure" (%reg) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-    %tm = "quantum.to_tensor"(%m) : (!quantum.measurement<1>) -> (tensor<1xi1>)
+    %tm = "qpu.to_bits"(%m) : (!quantum.measurement<1>) -> (tensor<1xi1>)
     return %tm, %qm_single_out : tensor<1xi1>, !quantum.qubit<1>
 }
 
@@ -30,7 +30,7 @@ func.func @qubit_measure_single(%reg : !quantum.qubit<1>) -> (tensor<1xi1>, !qua
 
 func.func @qubit_measure_multiple(%reg : !quantum.qubit<2>) -> (tensor<2xi1>, !quantum.qubit<2>) {
     %m, %qm_out = "quantum.measure" (%reg) : (!quantum.qubit<2>) -> (!quantum.measurement<2>, !quantum.qubit<2>)
-    %mt = "quantum.to_tensor"(%m) : (!quantum.measurement<2>) -> tensor<2xi1>
+    %mt = "qpu.to_bits"(%m) : (!quantum.measurement<2>) -> tensor<2xi1>
     return %mt, %qm_out : tensor<2xi1>, !quantum.qubit<2>
 }
 

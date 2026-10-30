@@ -302,10 +302,10 @@ static LogicalResult printIfOp(QASMEmitter &emitter, scf::IfOp ifOp)
     }
 
     auto extractedFromTensorOp = extractOp.getTensor().getDefiningOp();
-    ReadMeasurementOp mt;
+    qpu::ToBitsOp mt;
     llvm::SmallString<64> str;
     if (auto cmpOp = llvm::dyn_cast<arith::CmpIOp>(extractedFromTensorOp)) {
-        mt = llvm::dyn_cast<ReadMeasurementOp>(cmpOp.getLhs().getDefiningOp());
+        mt = llvm::dyn_cast<qpu::ToBitsOp>(cmpOp.getLhs().getDefiningOp());
         assert(
             cmpOp.getPredicate() == arith::CmpIPredicate::eq
             && "Current support limited to equals");
@@ -319,13 +319,12 @@ static LogicalResult printIfOp(QASMEmitter &emitter, scf::IfOp ifOp)
             cond.setBitVal(bitIndex++, value);
 
         cond.toString(str, 10, false);
-    } else if (
-        (mt = llvm::dyn_cast<ReadMeasurementOp>(extractedFromTensorOp))) {
+    } else if ((mt = llvm::dyn_cast<qpu::ToBitsOp>(extractedFromTensorOp))) {
         APInt cond = APInt::getAllOnes(mt.getResult().getType().getDimSize(0));
         cond.toString(str, 10, false);
     }
 
-    creg = emitter.getOrCreateClassicalRegisterName(mt.getInput());
+    creg = emitter.getOrCreateClassicalRegisterName(mt.getSrc());
     os << creg << "==" << str << ") ";
     return success();
 }
@@ -443,7 +442,7 @@ using ControlledRotationGates =
 using NoCodeGenOps = TypeList<
     IgnoredEntry<qpu::CircuitOp>,
     IgnoredEntry<qpu::ReturnOp>,
-    IgnoredEntry<ReadMeasurementOp>,
+    IgnoredEntry<qpu::ToBitsOp>,
     IgnoredEntry<DeallocateOp>,
     IgnoredEntry<scf::YieldOp>,
     IgnoredEntry<scf::ParallelOp>,

@@ -544,10 +544,14 @@ module {
     "qillr.Rz" (%1, %297) : (!qillr.qubit, f64) -> ()
     %298 = "qillr.ralloc" () : () -> (!qillr.result)
     "qillr.measure" (%1, %298) : (!qillr.qubit, !qillr.result) -> ()
-    %m1 = "qillr.read_measurement" (%298) : (!qillr.result) -> i1
+    %m1_bits = "qpu.to_bits" (%298) : (!qillr.result) -> tensor<1xi1>
+    %m1_idx = arith.constant 0 : index
+    %m1 = tensor.extract %m1_bits[%m1_idx] : tensor<1xi1>
     %300 = "qillr.ralloc" () : () -> (!qillr.result)
     "qillr.measure" (%5, %300) : (!qillr.qubit, !qillr.result) -> ()
-    %m2 = "qillr.read_measurement" (%300) : (!qillr.result) -> i1
+    %m2_bits = "qpu.to_bits" (%300) : (!qillr.result) -> tensor<1xi1>
+    %m2_idx = arith.constant 0 : index
+    %m2 = tensor.extract %m2_bits[%m2_idx] : tensor<1xi1>
    
     vector.print %m1 : i1
     vector.print %m2 : i1

@@ -36,13 +36,13 @@
 // CHECK-NEXT:             %[[VAL_25:.*]], %[[VAL_26:.*]] = "quantum.CNOT"(%[[VAL_23]], %[[VAL_24]]) : (!quantum.qubit<1>, !quantum.qubit<1>) -> (!quantum.qubit<1>, !quantum.qubit<1>)
 // CHECK-NEXT:             %[[CONSTANT_3:.*]] = arith.constant dense<false> : tensor<3xi1>
 // CHECK-NEXT:             %[[VAL_27:.*]], %[[VAL_28:.*]] = "quantum.measure"(%[[VAL_25]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_29:.*]] = "quantum.to_tensor"(%[[VAL_27]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_29:.*]] = "qpu.to_bits"(%[[VAL_27]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[INSERT_SLICE_0:.*]] = tensor.insert_slice %[[VAL_29]] into %[[CONSTANT_3]][0] [1] [1] : tensor<1xi1> into tensor<3xi1>
 // CHECK-NEXT:             %[[VAL_30:.*]], %[[VAL_31:.*]] = "quantum.measure"(%[[VAL_26]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_32:.*]] = "quantum.to_tensor"(%[[VAL_30]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_32:.*]] = "qpu.to_bits"(%[[VAL_30]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[INSERT_SLICE_1:.*]] = tensor.insert_slice %[[VAL_32]] into %[[INSERT_SLICE_0]][1] [1] [1] : tensor<1xi1> into tensor<3xi1>
 // CHECK-NEXT:             %[[VAL_33:.*]], %[[VAL_34:.*]] = "quantum.measure"(%[[VAL_22]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_35:.*]] = "quantum.to_tensor"(%[[VAL_33]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_35:.*]] = "qpu.to_bits"(%[[VAL_33]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[INSERT_SLICE_2:.*]] = tensor.insert_slice %[[VAL_35]] into %[[INSERT_SLICE_1]][2] [1] [1] : tensor<1xi1> into tensor<3xi1>
 // CHECK-DAG:             "quantum.deallocate"(%[[VAL_28]]) : (!quantum.qubit<1>) -> ()
 // CHECK-DAG:             "quantum.deallocate"(%[[VAL_31]]) : (!quantum.qubit<1>) -> ()

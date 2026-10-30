@@ -23,7 +23,7 @@
 // CHECK-NEXT:             %[[POST:.*]] = "quantum.call"(%[[BARRIER2]]) <{callee = @post}> : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK-NEXT:             %[[CONSTANT_0:.*]] = arith.constant dense<false> : tensor<1xi1>
 // CHECK-NEXT:             %[[MEASUREMENT:.*]], %[[MEASURED_Q:.*]] = "quantum.measure"(%[[POST]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[BITS:.*]] = "quantum.to_tensor"(%[[MEASUREMENT]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[BITS:.*]] = "qpu.to_bits"(%[[MEASUREMENT]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[INSERT_SLICE_0:.*]] = tensor.insert_slice %[[BITS]] into %[[CONSTANT_0]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
 // CHECK-DAG:             "quantum.deallocate"(%[[MEASURED_Q]]) : (!quantum.qubit<1>) -> ()
 // CHECK-NEXT:             "qpu.return"(%[[INSERT_SLICE_0]]) : (tensor<1xi1>) -> ()

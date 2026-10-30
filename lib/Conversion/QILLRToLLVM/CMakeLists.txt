@@ -8,6 +8,7 @@ add_mlir_conversion_library(QILLRToLLVM
         Core
 
     LINK_LIBS PUBLIC
+        QPUIR
         MLIRDialectUtils
         MLIRTransformUtils
         MLIRLLVMDialect

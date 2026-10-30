@@ -31,11 +31,11 @@ measure q[1] -> m1[0];
 // CHECK-NEXT:             %[[VAL_4:.*]] = "quantum.H"(%[[VAL_3]]#0) : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK-NEXT:             %[[VAL_5:.*]] = "quantum.H"(%[[VAL_3]]#1) : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK-NEXT:             %[[VAL_6:.*]], %[[VAL_7:.*]] = "quantum.measure"(%[[VAL_5]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_8:.*]] = "quantum.to_tensor"(%[[VAL_6]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_8:.*]] = "qpu.to_bits"(%[[VAL_6]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[VAL_9:.*]], %[[VAL_10:.*]] = "quantum.measure"(%[[VAL_2]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_11:.*]] = "quantum.to_tensor"(%[[VAL_9]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_11:.*]] = "qpu.to_bits"(%[[VAL_9]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-NEXT:             %[[VAL_12:.*]], %[[VAL_13:.*]] = "quantum.measure"(%[[VAL_4]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT:             %[[VAL_14:.*]] = "quantum.to_tensor"(%[[VAL_12]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_14:.*]] = "qpu.to_bits"(%[[VAL_12]]) : (!quantum.measurement<1>) -> tensor<1xi1>
 // CHECK-DAG:             "quantum.deallocate"(%[[VAL_10]]) : (!quantum.qubit<1>) -> ()
 // CHECK-DAG:             "quantum.deallocate"(%[[VAL_13]]) : (!quantum.qubit<1>) -> ()
 // CHECK-DAG:             "quantum.deallocate"(%[[VAL_7]]) : (!quantum.qubit<1>) -> ()

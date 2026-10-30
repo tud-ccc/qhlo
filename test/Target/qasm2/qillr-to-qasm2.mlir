@@ -60,8 +60,8 @@ module {
 // Measurement utilities
 // CHECK-NEXT: measure [[q0]][2] -> [[c0]][1];
 "qillr.measure"(%q0, %r0) <{inputIndex = [2], resultIndex = [1]}> : (!qillr.qubit, !qillr.result) -> ()
-// CHECK-NOT: "qillr.read_measurement"
-%mread = "qillr.read_measurement"(%r0) <{index = [1]}> : (!qillr.result) -> tensor<2xi1>
+// CHECK-NOT: "qpu.to_bits"
+%mread = "qpu.to_bits"(%r0) : (!qillr.result) -> tensor<2xi1>
 // CHECK-NEXT: reset [[q0]][2];
 "qillr.reset"(%q0) <{index = [2]}> : (!qillr.qubit) -> ()
   "qpu.return"(%mread) : (tensor<2xi1>) -> ()

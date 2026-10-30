@@ -175,6 +175,55 @@ void CircuitOp::build(
 }
 
 //===----------------------------------------------------------------------===//
+// BitsEqOp
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult BitsEqOp::verify()
+{
+    auto bitsType = mlir::cast<mlir::ShapedType>(getBits().getType());
+    auto cmpType = mlir::cast<mlir::IntegerType>(getCmp().getType());
+
+    if (bitsType.isDynamicDim(0))
+        return emitOpError("requires a statically sized bit sequence");
+
+    if (bitsType.getDimSize(0) != cmpType.getWidth())
+        return emitOpError(
+            "requires the bit sequence length to equal "
+            "the comparison integer bit width");
+
+    return mlir::success();
+}
+
+void BitsEqOp::getEffects(
+    llvm::SmallVectorImpl<mlir::MemoryEffects::EffectInstance> &effects)
+{
+    if (llvm::isa<mlir::MemRefType>(getBits().getType()))
+        effects.emplace_back(
+            mlir::MemoryEffects::Read::get(),
+            &getBitsMutable());
+}
+
+//===----------------------------------------------------------------------===//
+// ToBitsOp
+//===----------------------------------------------------------------------===//
+
+void ToBitsOp::getEffects(
+    llvm::SmallVectorImpl<mlir::MemoryEffects::EffectInstance> &effects)
+{
+    auto source = llvm::cast<MeasurementSourceInterface>(getSrc().getType());
+    if (source.isMutable())
+        effects.emplace_back(
+            mlir::MemoryEffects::Read::get(),
+            &getSrcMutable());
+
+    auto dst = mlir::cast<mlir::OpResult>(getDst());
+    if (!llvm::isa<mlir::MemRefType>(dst.getType())) return;
+
+    effects.emplace_back(mlir::MemoryEffects::Allocate::get(), dst);
+    effects.emplace_back(mlir::MemoryEffects::Write::get(), dst);
+}
+
+//===----------------------------------------------------------------------===//
 // QPUDialect
 //===----------------------------------------------------------------------===//
 

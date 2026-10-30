@@ -63,8 +63,8 @@ module {
     "qillr.measure"(%q1, %r1) : (!qillr.qubit, !qillr.result) -> ()
     
     // Read measurements (returns a tensor<1xi1>) and extract the scalar value.
-    %m_out0_tensor = "qillr.read_measurement"(%r0) : (!qillr.result) -> tensor<1xi1>
-    %m_out1_tensor = "qillr.read_measurement"(%r1) : (!qillr.result) -> tensor<1xi1>
+    %m_out0_tensor = "qpu.to_bits"(%r0) : (!qillr.result) -> tensor<1xi1>
+    %m_out1_tensor = "qpu.to_bits"(%r1) : (!qillr.result) -> tensor<1xi1>
     %c_index = arith.constant 0 : index
     %m_out0 = tensor.extract %m_out0_tensor[%c_index] : tensor<1xi1>
     %m_out1 = tensor.extract %m_out1_tensor[%c_index] : tensor<1xi1>

@@ -6,6 +6,7 @@
 #pragma once
 
 #include "mlir/IR/Types.h"
+#include "quantum-mlir/Dialect/QPU/Interfaces/MeasurementSourceInterface.h"
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumAttributes.h"
 
 //===- Generated includes -------------------------------------------------===//

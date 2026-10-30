@@ -101,8 +101,8 @@ func.func @main() {
   "qillr.measure"(%q2, %r2)         : (!qillr.qubit, !qillr.result) -> ()
 // CHECK: "qillr.measure"(%[[Q2]], %[[R2]]) <{inputIndex = [], resultIndex = []}> : (!qillr.qubit, !qillr.result) -> ()
 
-  %m0 = "qillr.read_measurement"(%r0) : (!qillr.result) -> tensor<1xi1>
-// CHECK: %[[M0:.+]] = "qillr.read_measurement"(%[[R0]]) <{index = []}> : (!qillr.result) -> tensor<1xi1>
+  %m0 = "qpu.to_bits"(%r0) : (!qillr.result) -> tensor<1xi1>
+// CHECK: %[[M0:.+]] = "qpu.to_bits"(%[[R0]]) : (!qillr.result) -> tensor<1xi1>
 
   // Reset
   "qillr.reset"(%q0)                : (!qillr.qubit) -> ()
