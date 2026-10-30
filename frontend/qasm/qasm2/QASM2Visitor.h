@@ -14,6 +14,7 @@
 #include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
 
 #include <any>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringRef.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
@@ -75,6 +76,9 @@ public:
     std::any visitIfStatement(qasm2Parser::IfStatementContext* ctx) override;
 
 private:
+    llvm::SmallVector<QuantumOperand>
+    prepareConditionalQubits(qasm2Parser::QuantumOperationContext* operation);
+
     mlir::Location getLocation(antlr4::ParserRuleContext* ctx) const;
 
     std::optional<unsigned> parseUnsigned(

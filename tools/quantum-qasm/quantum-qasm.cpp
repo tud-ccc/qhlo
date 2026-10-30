@@ -12,6 +12,7 @@
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/Support/FileUtilities.h>
+#include <mlir/Support/ToolUtilities.h>
 
 namespace {
 
@@ -20,6 +21,27 @@ llvm::cl::opt<std::string> inputFilename(
     llvm::cl::desc("<input QASM file>"),
     llvm::cl::init("-"),
     llvm::cl::value_desc("filename"));
+
+llvm::cl::opt<bool> splitInputFile(
+    "split-input-file",
+    llvm::cl::desc("Split the input file into independent chunks"),
+    llvm::cl::init(false));
+
+mlir::LogicalResult processBuffer(
+    std::unique_ptr<llvm::MemoryBuffer> input,
+    llvm::raw_ostream &output)
+{
+    mlir::MLIRContext context;
+    auto module = quantum::frontend::parseQASM(
+        input->getBuffer(),
+        inputFilename,
+        context);
+    if (!module) return mlir::failure();
+
+    module->print(output);
+    output << '\n';
+    return mlir::success();
+}
 
 } // namespace
 
@@ -41,20 +63,11 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    // Create the MLIR context.
-    mlir::MLIRContext context;
-
-    // Parse QASM and lower it to MLIR.
-    auto module = quantum::frontend::parseQASM(
-        input->getBuffer(),
-        inputFilename,
-        context);
-
-    if (!module) return 1;
-
-    // Emit the resulting MLIR.
-    module->print(llvm::outs());
-    llvm::outs() << '\n';
-
-    return 0;
+    return mlir::failed(
+        mlir::splitAndProcessBuffer(
+            std::move(input),
+            processBuffer,
+            llvm::outs(),
+            splitInputFile ? mlir::kDefaultSplitMarker : "",
+            splitInputFile ? "// -----" : ""));
 }

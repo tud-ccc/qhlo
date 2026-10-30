@@ -12,6 +12,7 @@
 
 #include <charconv>
 #include <cstddef>
+#include <llvm/ADT/APInt.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/Twine.h>
@@ -61,6 +62,45 @@ QASM2Visitor::QASM2Visitor(
 // ################################################################################
 // # Simple Helpers
 // ################################################################################
+
+llvm::SmallVector<QuantumOperand> QASM2Visitor::prepareConditionalQubits(
+    qasm2Parser::QuantumOperationContext* operation)
+{
+    llvm::SmallVector<qasm2Parser::GateOperandContext*> operands;
+    auto* measurement = operation->measureArrowAssignmentStatement();
+    if (auto* call = operation->gateCallStatement())
+        llvm::append_range(operands, call->gateOperandList()->gateOperand());
+    else if (auto* reset = operation->resetStatement())
+        operands.push_back(reset->gateOperand());
+    else
+        operands.push_back(measurement->gateOperand(0));
+
+    llvm::SmallVector<QuantumOperand> qubits;
+    for (auto* operand : operands) {
+        auto* identifier = operand->indexedIdentifier();
+        if (measurement && !identifier->designator()) {
+            auto* reg = scope.lookupQReg(identifier->Identifier()->getText());
+            if (!reg) {
+                error(operand, "unknown measurement source register");
+                return {};
+            }
+            // Measurement lowers each qubit separately, so split before the if.
+            for (unsigned i = 0; i < reg->size; ++i) {
+                auto value = scope.materializeQubit(
+                    *reg,
+                    i,
+                    builder,
+                    getLocation(operation));
+                qubits.push_back({reg, i, value});
+            }
+        } else {
+            auto resolved = resolveQuantumOperand(operand);
+            if (!resolved) return {};
+            qubits.push_back(*resolved);
+        }
+    }
+    return qubits;
+}
 
 mlir::Location QASM2Visitor::getLocation(antlr4::ParserRuleContext* ctx) const
 {
@@ -1017,7 +1057,17 @@ std::any QASM2Visitor::visitOpaqueDeclarationStatement(
 
 std::any QASM2Visitor::visitIfStatement(qasm2Parser::IfStatementContext* ctx)
 {
-    const auto loc = getLocation(ctx);
+    // OpenQASM 2 conditionals guard a single gate call, measurement, or reset.
+    auto* operation = ctx->quantumOperation();
+    if (!operation
+        || (!operation->gateCallStatement()
+            && !operation->measureArrowAssignmentStatement()
+            && !operation->resetStatement())) {
+        error(ctx, "an if body must be a gate call, measurement, or reset");
+        return {};
+    }
+
+    // Evaluate the condition using the classical register's current value.
     auto* creg = scope.lookupCReg(ctx->Identifier()->getText());
     if (!creg) {
         error(
@@ -1026,151 +1076,95 @@ std::any QASM2Visitor::visitIfStatement(qasm2Parser::IfStatementContext* ctx)
                 + "'");
         return {};
     }
+
+    // Match the comparison integer's width to the number of classical bits.
     const auto literal = ctx->DecimalIntegerLiteral()->getText();
-    llvm::APInt axiom(llvm::APInt::getBitsNeeded(literal, 10), literal, 10);
-    if (axiom.getActiveBits() > creg->size) return {};
-    axiom = axiom.zextOrTrunc(std::max(1u, creg->size));
-    context.loadDialect<mlir::scf::SCFDialect>();
-    auto initialize = [&](QASMScope::ClassicalRegister &reg) {
-        if (!reg.value) {
-            auto type =
-                mlir::RankedTensorType::get({reg.size}, builder.getI1Type());
-            reg.value = mlir::arith::ConstantOp::create(
-                builder,
-                loc,
-                type,
-                mlir::DenseElementsAttr::get(type, builder.getBoolAttr(false)));
-        }
-    };
-    initialize(*creg);
-    llvm::SmallVector<llvm::APInt> bits;
-    for (unsigned i = 0; i < creg->size; ++i) bits.emplace_back(1, axiom[i]);
-    auto type = mlir::cast<mlir::RankedTensorType>(creg->value.getType());
-    auto expected = mlir::arith::ConstantOp::create(
+
+    auto constant = mlir::arith::ConstantOp::create(
         builder,
-        loc,
-        type,
-        mlir::DenseIntElementsAttr::get(type, bits));
-    auto comparison = mlir::arith::CmpIOp::create(
-        builder,
-        loc,
-        mlir::arith::CmpIPredicate::eq,
-        creg->value,
-        expected);
-    auto zero = mlir::arith::ConstantIndexOp::create(builder, loc, 0);
-    mlir::Value condition;
-    if (creg->size == 1) {
-        condition = mlir::tensor::ExtractOp::create(
-            builder,
-            loc,
-            comparison,
-            mlir::ValueRange{zero});
-    } else {
-        auto upper =
-            mlir::arith::ConstantIndexOp::create(builder, loc, creg->size);
-        auto step = mlir::arith::ConstantIndexOp::create(builder, loc, 1);
-        auto initial = mlir::arith::ConstantIntOp::create(builder, loc, 1, 1);
-        auto reduction = mlir::scf::ParallelOp::create(
-            builder,
-            loc,
-            mlir::ValueRange{zero},
-            mlir::ValueRange{upper},
-            mlir::ValueRange{step},
-            mlir::ValueRange{initial},
-            [&](mlir::OpBuilder &b,
-                mlir::Location l,
-                mlir::ValueRange indices,
-                mlir::ValueRange) {
-                auto bit =
-                    mlir::tensor::ExtractOp::create(b, l, comparison, indices);
-                auto reduce =
-                    mlir::scf::ReduceOp::create(b, l, mlir::ValueRange{bit});
-                mlir::OpBuilder::InsertionGuard guard(b);
-                auto &block = reduce.getReductions().front().front();
-                b.setInsertionPointToStart(&block);
-                auto both = mlir::arith::AndIOp::create(
-                    b,
-                    l,
-                    block.getArgument(0),
-                    block.getArgument(1));
-                mlir::scf::ReduceReturnOp::create(b, l, both);
-            });
-        condition = reduction.getResult(0);
+        getLocation(ctx),
+        builder.getIntegerAttr(
+            builder.getIntegerType(creg->size),
+            llvm::APInt(creg->size, literal, 10)));
+
+    if (!creg->value) {
+        error(ctx, "Cannot compare to a non-existing value");
+        return {};
     }
 
-    auto* operation = ctx->quantumOperation();
-    std::vector<qasm2Parser::GateOperandContext*> operands;
+    auto eq = mlir::qpu::BitsEqOp::create(
+        builder,
+        getLocation(ctx),
+        builder.getI1Type(),
+        creg->value,
+        constant);
+
+    // Split qubits before entering either branch so both paths share the same
+    // interval layout and no split results escape their defining region.
+    auto qubits = prepareConditionalQubits(operation);
+    if (qubits.empty()) {
+        error(
+            ctx,
+            "cannot lower conditional operation: no quantum operands could be "
+            "resolved");
+        return {};
+    }
+
+    // A conditional measurement also updates classical state. Ensure that the
+    // false path has a destination value to preserve if measurement is skipped.
     QASMScope::ClassicalRegister* destination = nullptr;
-    if (auto* gate = operation->gateCallStatement()) {
-        if (auto* list = gate->gateOperandList())
-            operands = list->gateOperand();
-        else
-            operands = gate->gateOperand();
-    } else if (auto* reset = operation->resetStatement()) {
-        operands.push_back(reset->gateOperand());
-    } else if (auto* measure = operation->measureArrowAssignmentStatement()) {
-        operands.push_back(measure->gateOperand(0));
-        destination = scope.lookupCReg(measure->gateOperand(1)
-                                           ->indexedIdentifier()
-                                           ->Identifier()
-                                           ->getText());
+    if (auto* measurement = operation->measureArrowAssignmentStatement()) {
+        auto* identifier = measurement->gateOperand(1)->indexedIdentifier();
+        destination = scope.lookupCReg(identifier->Identifier()->getText());
         if (!destination) {
             error(ctx, "unknown measurement destination register");
             return {};
         }
-        initialize(*destination);
+        if (!destination->value) {
+            auto type = mlir::RankedTensorType::get(
+                {destination->size},
+                builder.getI1Type());
+            destination->value = mlir::arith::ConstantOp::create(
+                builder,
+                getLocation(ctx),
+                type,
+                mlir::DenseElementsAttr::get(type, builder.getBoolAttr(false)));
+        }
     }
 
-    llvm::SmallVector<QASMScope::QuantumRegister*> registers;
-    for (auto* operand : operands) {
-        auto* indexed = operand->indexedIdentifier();
-        if (destination && !indexed->designator()) {
-            auto* reg = scope.lookupQReg(indexed->Identifier()->getText());
-            if (!reg) {
-                error(
-                    ctx,
-                    "unknown quantum register '"
-                        + indexed->Identifier()->getText() + "'");
-                return {};
-            }
-            registers.push_back(reg);
-            for (unsigned i = 0; i < reg->size; ++i)
-                scope.materializeQubit(*reg, i, builder, loc);
-            continue;
-        }
-        auto resolved = resolveQuantumOperand(operand);
-        if (!resolved) return {};
-        if (!llvm::is_contained(registers, resolved->reg))
-            registers.push_back(resolved->reg);
-    }
-    llvm::SmallVector<std::pair<QASMScope::QuantumRegister*, unsigned>> outputs;
-    llvm::SmallVector<mlir::Value> inputs;
-    for (auto* reg : registers) {
-        for (const auto &interval : reg->intervals.intervals()) {
-            outputs.emplace_back(reg, interval.start);
-            inputs.push_back(interval.value);
-        }
-    }
-    if (destination) inputs.push_back(destination->value);
-    llvm::SmallVector<mlir::Type> resultTypes;
-    for (auto value : inputs) resultTypes.push_back(value.getType());
-    auto branch =
-        mlir::scf::IfOp::create(builder, loc, resultTypes, condition, true);
-    {
-        mlir::OpBuilder::InsertionGuard guard(builder);
-        builder.setInsertionPointToStart(&branch.getThenRegion().front());
-        visit(operation);
-        llvm::SmallVector<mlir::Value> results;
-        for (auto [reg, index] : outputs)
-            results.push_back(reg->intervals.lookup(index).value);
-        if (destination) results.push_back(destination->value);
-        mlir::scf::YieldOp::create(builder, loc, results);
-        builder.setInsertionPointToStart(&branch.getElseRegion().front());
-        mlir::scf::YieldOp::create(builder, loc, inputs);
-    }
-    for (auto [output, result] : llvm::zip(outputs, branch.getResults()))
-        output.first->intervals.lookup(output.second).value = result;
-    if (destination) destination->value = branch.getResults().back();
+    // Keep the incoming state for the false path. Both branches yield qubits
+    // first, followed by the full destination tensor for a measurement.
+    llvm::SmallVector<mlir::Value> originalValues;
+    for (const auto &qubit : qubits)
+        originalValues.push_back(
+            qubit.reg->intervals.lookup(qubit.index.value_or(0)).value);
+    if (destination) originalValues.push_back(destination->value);
+
+    auto ifOp = mlir::scf::IfOp::create(
+        builder,
+        getLocation(ctx),
+        eq.getResult(),
+        [&](mlir::OpBuilder &bodyBuilder, mlir::Location loc) {
+            // Lowering updates the scope with branch-local values. Yield them
+            // so the conditional can expose the updated state to later code.
+            operation->accept(this);
+            llvm::SmallVector<mlir::Value> updatedValues;
+            for (const auto &qubit : qubits)
+                updatedValues.push_back(
+                    qubit.reg->intervals.lookup(qubit.index.value_or(0)).value);
+            if (destination) updatedValues.push_back(destination->value);
+            mlir::scf::YieldOp::create(bodyBuilder, loc, updatedValues);
+        },
+        [&](mlir::OpBuilder &bodyBuilder, mlir::Location loc) {
+            // Skipping the operation preserves the incoming register state.
+            mlir::scf::YieldOp::create(bodyBuilder, loc, originalValues);
+        });
+
+    // Replace branch-local scope values with the merged conditional results,
+    // which are visible to operations following the if.
+    writeQuantumResult(qubits, ifOp.getResults().take_front(qubits.size()));
+    if (destination) destination->value = ifOp.getResults().back();
+
     return {};
 }
 
