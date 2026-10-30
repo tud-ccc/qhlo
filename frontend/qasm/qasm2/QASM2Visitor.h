@@ -16,6 +16,7 @@
 #include <any>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringRef.h>
+#include <llvm/Support/LogicalResult.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/Value.h>
@@ -76,7 +77,14 @@ public:
     std::any visitIfStatement(qasm2Parser::IfStatementContext* ctx) override;
 
 private:
-    llvm::SmallVector<QuantumOperand>
+    mlir::LogicalResult
+    ensureGateDefinition(GateDefinition &gate, mlir::Location loc);
+
+    mlir::Value getOrInitializeClassicalRegister(
+        QASMScope::ClassicalRegister &reg,
+        mlir::Location loc);
+
+    mlir::FailureOr<llvm::SmallVector<QuantumOperand>>
     prepareConditionalQubits(qasm2Parser::QuantumOperationContext* operation);
 
     mlir::Location getLocation(antlr4::ParserRuleContext* ctx) const;

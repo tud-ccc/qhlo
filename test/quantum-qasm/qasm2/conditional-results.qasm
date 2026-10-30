@@ -116,3 +116,28 @@ if(condition==1) measure r -> bits;
 // CHECK-NEXT: } else {
 // CHECK-NEXT: scf.yield %[[FIRST]]#0, %[[FIRST]]#1, %[[FIRST]]#2 : !quantum.qubit<1>, !quantum.qubit<1>, tensor<2xi1>
 // CHECK: "qpu.return"(%[[SECOND]]#2,
+
+// -----
+
+// Uppercase built-ins store their operands directly on the call parse node.
+OPENQASM 2.0;
+qreg q[2];
+creg condition[1];
+measure q[0] -> condition[0];
+if(condition==1) U(0,0,0) q[0];
+if(condition==1) CX q[0], q[1];
+
+// CHECK-LABEL: module {
+// CHECK: %{{.*}}, %[[INPUT:.*]] = "quantum.measure"
+// CHECK: %[[U_COND:.*]] = "qpu.bits_eq"
+// CHECK: %[[U:.*]] = scf.if %[[U_COND]] -> (!quantum.qubit<1>) {
+// CHECK: %[[UPDATED:.*]] = "quantum.U3"(%[[INPUT]],
+// CHECK-NEXT: scf.yield %[[UPDATED]] : !quantum.qubit<1>
+// CHECK-NEXT: } else {
+// CHECK-NEXT: scf.yield %[[INPUT]] : !quantum.qubit<1>
+// CHECK: %[[CX_COND:.*]] = "qpu.bits_eq"
+// CHECK: %[[CX:.*]]:2 = scf.if %[[CX_COND]] -> (!quantum.qubit<1>, !quantum.qubit<1>) {
+// CHECK: %[[CONTROL:.*]], %[[TARGET:.*]] = "quantum.CNOT"(%[[U]], %[[OTHER:.*]]) : (!quantum.qubit<1>, !quantum.qubit<1>) -> (!quantum.qubit<1>, !quantum.qubit<1>)
+// CHECK-NEXT: scf.yield %[[CONTROL]], %[[TARGET]] : !quantum.qubit<1>, !quantum.qubit<1>
+// CHECK-NEXT: } else {
+// CHECK-NEXT: scf.yield %[[U]], %[[OTHER]] : !quantum.qubit<1>, !quantum.qubit<1>

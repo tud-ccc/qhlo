@@ -13,6 +13,7 @@
 #include <charconv>
 #include <cstddef>
 #include <llvm/ADT/APInt.h>
+#include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/Twine.h>
@@ -63,13 +64,120 @@ QASM2Visitor::QASM2Visitor(
 // # Simple Helpers
 // ################################################################################
 
-llvm::SmallVector<QuantumOperand> QASM2Visitor::prepareConditionalQubits(
+namespace {
+
+std::vector<qasm2Parser::GateOperandContext*>
+getGateOperands(qasm2Parser::GateCallStatementContext* call)
+{
+    return call->gateOperandList() ? call->gateOperandList()->gateOperand()
+                                   : call->gateOperand();
+}
+
+} // namespace
+
+mlir::LogicalResult
+QASM2Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
+{
+    if (gate.realized) return mlir::success();
+
+    mlir::OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(mainCircuit.getOperation());
+    // Input types
+    llvm::SmallVector<mlir::Type> inputTys;
+    inputTys.reserve(gate.qubits.size() + gate.parameters.size());
+    inputTys.append(
+        gate.qubits.size(),
+        mlir::quantum::QubitType::get(&context, 1));
+    inputTys.append(gate.parameters.size(), builder.getF64Type());
+
+    // Output types
+    llvm::SmallVector<mlir::Type> outputTys;
+    outputTys.reserve(gate.qubits.size());
+    outputTys.append(
+        gate.qubits.size(),
+        mlir::quantum::QubitType::get(&context, 1));
+
+    auto ty = mlir::FunctionType::get(
+        &context,
+        mlir::TypeRange(inputTys),
+        mlir::TypeRange(outputTys));
+
+    auto op = mlir::quantum::GateOp::create(
+        builder,
+        loc,
+        gate.name,
+        ty,
+        mlir::ArrayRef<mlir::NamedAttribute>{});
+
+    gate.gateOp = op;
+    gate.realized = true;
+
+    // Visit gate body
+    auto &gateBlock = gate.gateOp.getBody().emplaceBlock();
+    for (auto type : gate.gateOp.getArgumentTypes())
+        gateBlock.addArgument(type, loc);
+
+    QASMScope gateScope;
+    for (auto [index, name] : llvm::enumerate(gate.parameters))
+        gateScope.declareCReg(
+            name,
+            1,
+            gateBlock.getArgument(gate.qubits.size() + index));
+    for (auto [index, name] : llvm::enumerate(gate.qubits))
+        gateScope.declareQReg(name, 1, gateBlock.getArgument(index));
+
+    QASM2Visitor gateBodyVisitor{
+        context,
+        module,
+        qpuModule,
+        mainCircuit,
+        gate.filename,
+        gateScope,
+        gateLibrary,
+        includeResolver,
+        translationUnit};
+
+    gateBodyVisitor.builder.setInsertionPointToEnd(&gateBlock);
+    gateBodyVisitor.visitScope(gate.body);
+    if (gateBodyVisitor.failed()) {
+        hadError = true;
+        return mlir::failure();
+    }
+
+    llvm::SmallVector<mlir::Value> returnValues;
+    returnValues.reserve(gate.qubits.size());
+    for (const auto &name : gate.qubits)
+        returnValues.push_back(
+            gateScope.lookupQReg(name)->intervals.lookup(0).value);
+    mlir::quantum::ReturnOp::create(gateBodyVisitor.builder, loc, returnValues);
+
+    return mlir::success();
+}
+
+mlir::Value QASM2Visitor::getOrInitializeClassicalRegister(
+    QASMScope::ClassicalRegister &reg,
+    mlir::Location loc)
+{
+    if (!reg.value) {
+        auto type =
+            mlir::RankedTensorType::get({reg.size}, builder.getI1Type());
+        reg.value = mlir::arith::ConstantOp::create(
+            builder,
+            loc,
+            type,
+            mlir::DenseElementsAttr::get(type, builder.getBoolAttr(false)));
+    }
+    return reg.value;
+}
+
+mlir::FailureOr<llvm::SmallVector<QuantumOperand>>
+QASM2Visitor::prepareConditionalQubits(
     qasm2Parser::QuantumOperationContext* operation)
 {
     llvm::SmallVector<qasm2Parser::GateOperandContext*> operands;
     auto* measurement = operation->measureArrowAssignmentStatement();
     if (auto* call = operation->gateCallStatement())
-        llvm::append_range(operands, call->gateOperandList()->gateOperand());
+        llvm::append_range(operands, getGateOperands(call));
     else if (auto* reset = operation->resetStatement())
         operands.push_back(reset->gateOperand());
     else
@@ -82,7 +190,7 @@ llvm::SmallVector<QuantumOperand> QASM2Visitor::prepareConditionalQubits(
             auto* reg = scope.lookupQReg(identifier->Identifier()->getText());
             if (!reg) {
                 error(operand, "unknown measurement source register");
-                return {};
+                return mlir::failure();
             }
             // Measurement lowers each qubit separately, so split before the if.
             for (unsigned i = 0; i < reg->size; ++i) {
@@ -95,7 +203,7 @@ llvm::SmallVector<QuantumOperand> QASM2Visitor::prepareConditionalQubits(
             }
         } else {
             auto resolved = resolveQuantumOperand(operand);
-            if (!resolved) return {};
+            if (!resolved) return mlir::failure();
             qubits.push_back(*resolved);
         }
     }
@@ -132,10 +240,8 @@ std::optional<unsigned> QASM2Visitor::parseUnsigned(
     auto result =
         std::from_chars(text.data(), text.data() + text.size(), value);
 
-    if (result.ec != std::errc{}) {
-        mlir::emitError(
-            getLocation(ctx),
-            "invalid integer literal '" + text + "'");
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size()) {
+        error(ctx, "invalid integer literal '" + text + "'");
         return std::nullopt;
     }
 
@@ -162,7 +268,6 @@ enum class QuantumNativeGate {
     RY,
     RZ,
     P,
-    U,
     U1,
     U2,
     U3,
@@ -264,79 +369,40 @@ mlir::FailureOr<llvm::SmallVector<mlir::Value>> emitNativeGate(
         return createNativeGate<Op>(loc, builder, qubits, parameters);
     };
 
-    using namespace mlir::quantum;
-
     switch (spec.kind) {
-    case QuantumNativeGate::H: return emit.operator()<HOp>();
-    case QuantumNativeGate::X: return emit.operator()<XOp>();
-    case QuantumNativeGate::Y: return emit.operator()<YOp>();
-    case QuantumNativeGate::Z: return emit.operator()<ZOp>();
-    case QuantumNativeGate::S: return emit.operator()<SOp>();
-    case QuantumNativeGate::SX: return emit.operator()<SXOp>();
-    case QuantumNativeGate::T: return emit.operator()<TOp>();
-    case QuantumNativeGate::Sdg: return emit.operator()<SdgOp>();
-    case QuantumNativeGate::Tdg: return emit.operator()<TdgOp>();
-    case QuantumNativeGate::CX: return emit.operator()<CNOTOp>();
-    case QuantumNativeGate::CZ: return emit.operator()<CZOp>();
-    case QuantumNativeGate::SWAP: return emit.operator()<SWAPOp>();
-    case QuantumNativeGate::RX: return emit.operator()<RxOp>();
-    case QuantumNativeGate::RY: return emit.operator()<RyOp>();
-    case QuantumNativeGate::RZ: return emit.operator()<RzOp>();
-    case QuantumNativeGate::P: return emit.operator()<PhaseOp>();
-    case QuantumNativeGate::U1: return emit.operator()<U1Op>();
-    case QuantumNativeGate::U2: return emit.operator()<U2Op>();
-    case QuantumNativeGate::U:
-    case QuantumNativeGate::U3: return emit.operator()<U3Op>();
-    case QuantumNativeGate::CRZ: return emit.operator()<CRzOp>();
-    case QuantumNativeGate::CRY: return emit.operator()<CRyOp>();
-    case QuantumNativeGate::CU1: return emit.operator()<CU1Op>();
-    case QuantumNativeGate::CCX: return emit.operator()<CCXOp>();
-    case QuantumNativeGate::CSWAP: return emit.operator()<CSWAPOp>();
+    case QuantumNativeGate::H: return emit.operator()<mlir::quantum::HOp>();
+    case QuantumNativeGate::X: return emit.operator()<mlir::quantum::XOp>();
+    case QuantumNativeGate::Y: return emit.operator()<mlir::quantum::YOp>();
+    case QuantumNativeGate::Z: return emit.operator()<mlir::quantum::ZOp>();
+    case QuantumNativeGate::S: return emit.operator()<mlir::quantum::SOp>();
+    case QuantumNativeGate::SX: return emit.operator()<mlir::quantum::SXOp>();
+    case QuantumNativeGate::T: return emit.operator()<mlir::quantum::TOp>();
+    case QuantumNativeGate::Sdg: return emit.operator()<mlir::quantum::SdgOp>();
+    case QuantumNativeGate::Tdg: return emit.operator()<mlir::quantum::TdgOp>();
+    case QuantumNativeGate::CX: return emit.operator()<mlir::quantum::CNOTOp>();
+    case QuantumNativeGate::CZ: return emit.operator()<mlir::quantum::CZOp>();
+    case QuantumNativeGate::SWAP:
+        return emit.operator()<mlir::quantum::SWAPOp>();
+    case QuantumNativeGate::RX: return emit.operator()<mlir::quantum::RxOp>();
+    case QuantumNativeGate::RY: return emit.operator()<mlir::quantum::RyOp>();
+    case QuantumNativeGate::RZ: return emit.operator()<mlir::quantum::RzOp>();
+    case QuantumNativeGate::P: return emit.operator()<mlir::quantum::PhaseOp>();
+    case QuantumNativeGate::U1: return emit.operator()<mlir::quantum::U1Op>();
+    case QuantumNativeGate::U2: return emit.operator()<mlir::quantum::U2Op>();
+    case QuantumNativeGate::U3: return emit.operator()<mlir::quantum::U3Op>();
+    case QuantumNativeGate::CRZ: return emit.operator()<mlir::quantum::CRzOp>();
+    case QuantumNativeGate::CRY: return emit.operator()<mlir::quantum::CRyOp>();
+    case QuantumNativeGate::CU1: return emit.operator()<mlir::quantum::CU1Op>();
+    case QuantumNativeGate::CCX: return emit.operator()<mlir::quantum::CCXOp>();
+    case QuantumNativeGate::CSWAP:
+        return emit.operator()<mlir::quantum::CSWAPOp>();
     }
 
     mlir::emitError(loc) << "unsupported native gate";
     return mlir::failure();
 }
 
-llvm::LogicalResult emitGateDefition(
-    GateDefinition &gate,
-    mlir::Location loc,
-    mlir::OpBuilder &builder)
-{
-    // Input types
-    llvm::SmallVector<mlir::Type> inputTys;
-    inputTys.reserve(gate.qubits.size() + gate.parameters.size());
-    inputTys.append(
-        gate.qubits.size(),
-        mlir::quantum::QubitType::get(builder.getContext(), 1));
-    inputTys.append(gate.parameters.size(), builder.getF64Type());
-
-    // Output types
-    llvm::SmallVector<mlir::Type> outputTys;
-    outputTys.reserve(gate.qubits.size());
-    outputTys.append(
-        gate.qubits.size(),
-        mlir::quantum::QubitType::get(builder.getContext(), 1));
-
-    auto ty = mlir::FunctionType::get(
-        builder.getContext(),
-        mlir::TypeRange(inputTys),
-        mlir::TypeRange(outputTys));
-
-    auto op = mlir::quantum::GateOp::create(
-        builder,
-        loc,
-        gate.name,
-        ty,
-        mlir::ArrayRef<mlir::NamedAttribute>{});
-
-    gate.gateOp = op;
-    gate.realized = true;
-
-    return llvm::success();
-}
-
-mlir::FailureOr<llvm::SmallVector<mlir::Value>> emitGateCall(
+llvm::SmallVector<mlir::Value> emitGateCall(
     const GateDefinition &gate,
     mlir::Location loc,
     mlir::OpBuilder &builder,
@@ -390,8 +456,8 @@ std::any QASM2Visitor::visitOldStyleDeclarationStatement(
     }
 
     auto size = parseUnsigned(ctx->designator()->DecimalIntegerLiteral(), ctx);
-
-    if (!size || *size == 0) {
+    if (!size) return {};
+    if (*size == 0) {
         error(ctx, "register size must be greater than zero");
         return {};
     }
@@ -423,8 +489,10 @@ std::any QASM2Visitor::visitOldStyleDeclarationStatement(
 // # Operand resolution
 // ################################################################################
 
+namespace {
+
 void writeQuantumResult(
-    const llvm::SmallVector<QuantumOperand> &operands,
+    llvm::ArrayRef<QuantumOperand> operands,
     mlir::ValueRange results)
 {
     for (auto [operand, result] : llvm::zip_equal(operands, results)) {
@@ -437,6 +505,8 @@ void writeQuantumResult(
         }
     }
 }
+
+} // namespace
 
 std::optional<QuantumOperand>
 QASM2Visitor::resolveQuantumOperand(qasm2Parser::GateOperandContext* ctx)
@@ -471,21 +541,10 @@ QASM2Visitor::resolveQuantumOperand(qasm2Parser::GateOperandContext* ctx)
         return operand;
     }
 
-    // Get the index the quantum register is accessed at
-    unsigned index = 0;
-    const std::string indexText =
-        indexed->designator()->DecimalIntegerLiteral()->getText();
-
-    auto [ptr, ec] = std::from_chars(
-        indexText.data(),
-        indexText.data() + indexText.size(),
-        index);
-
-    if (ec != std::errc{}) {
-        error(ctx, "invalid qubit index");
-        return std::nullopt;
-    }
-
+    auto parsedIndex =
+        parseUnsigned(indexed->designator()->DecimalIntegerLiteral(), ctx);
+    if (!parsedIndex) return std::nullopt;
+    const unsigned index = *parsedIndex;
     if (index >= reg->size) {
         error(
             ctx,
@@ -514,7 +573,7 @@ QASM2Visitor::visitIncludeStatement(qasm2Parser::IncludeStatementContext* ctx)
 
     if (firstQuote == std::string::npos || lastQuote == std::string::npos
         || firstQuote == lastQuote) {
-        emitError(getLocation(ctx), "malformed include statement");
+        error(ctx, "malformed include statement");
         return {};
     }
 
@@ -523,9 +582,9 @@ QASM2Visitor::visitIncludeStatement(qasm2Parser::IncludeStatementContext* ctx)
 
     auto resolved = includeResolver.resolve(includeName, filename);
     if (!resolved) {
-        emitError(
-            getLocation(ctx),
-            llvm::Twine("failed to resolve include '") + includeName
+        error(
+            ctx,
+            "failed to resolve include '" + includeName
                 + "': " + llvm::toString(resolved.takeError()));
         return {};
     }
@@ -575,8 +634,13 @@ QASM2Visitor::resolveClassicExpression(qasm2Parser::ExpressionContext* ctx)
     if (auto* literal = dynamic_cast<Parser::LiteralExpressionContext*>(ctx)) {
         if (literal->Identifier()) {
             if (auto* parameter =
-                    scope.lookupCReg(literal->Identifier()->getText()))
+                    scope.lookupCReg(literal->Identifier()->getText())) {
+                if (!parameter->value || !parameter->value.getType().isF64()) {
+                    error(ctx, "gate parameters must have type f64");
+                    return {};
+                }
                 return parameter->value;
+            }
             error(
                 ctx,
                 "unknown parameter '" + literal->Identifier()->getText() + "'");
@@ -677,48 +741,32 @@ std::any
 QASM2Visitor::visitGateCallStatement(qasm2Parser::GateCallStatementContext* ctx)
 {
     // Visit and resolve qubit operands
-    const auto operands = ctx->gateOperandList()
-                              ? ctx->gateOperandList()->gateOperand()
-                              : ctx->gateOperand();
+    const auto operands = getGateOperands(ctx);
 
     llvm::SmallVector<QuantumOperand> qubitValues;
     qubitValues.reserve(operands.size());
     llvm::SmallVector<mlir::Value> qubits;
-    qubits.reserve(qubitValues.size());
+    qubits.reserve(operands.size());
 
     for (auto* operand : operands) {
         auto resolved = resolveQuantumOperand(operand);
-        if (!resolved) {
-            emitError(
-                getLocation(ctx),
-                llvm::Twine("gate operand'") + operand->getText()
-                    + "' cannot be resolved");
-            return {};
-        }
+        if (!resolved) return {};
         qubitValues.push_back(*resolved);
         qubits.push_back(resolved->value);
     }
 
-    // Visit and resolve parameter expressions
-    std::optional<std::vector<qasm2Parser::ExpressionContext*>>
-        parameterExpressions;
-
-    if (auto* list = ctx->expressionList())
-        parameterExpressions = list->expression();
-
     llvm::SmallVector<mlir::Value> parameterValues;
-    if (parameterExpressions) {
-        parameterValues.reserve(parameterExpressions->size());
-        for (auto* exprCtx : *parameterExpressions) {
-            auto resolved = resolveClassicExpression(exprCtx);
-            if (!resolved) {
-                emitError(
-                    getLocation(ctx),
-                    llvm::Twine("gate operand'") + exprCtx->getText()
-                        + "' cannot be resolved");
+    if (auto* list = ctx->expressionList()) {
+        const auto expressions = list->expression();
+        parameterValues.reserve(expressions.size());
+        for (auto* expression : expressions) {
+            auto value = resolveClassicExpression(expression);
+            if (!value) return {};
+            if (!value.getType().isF64()) {
+                error(ctx, "gate parameters must have type f64");
                 return {};
             }
-            parameterValues.push_back(resolved);
+            parameterValues.push_back(value);
         }
     }
 
@@ -751,77 +799,36 @@ QASM2Visitor::visitGateCallStatement(qasm2Parser::GateCallStatementContext* ctx)
         auto gate = gateLibrary.lookup(name);
         // Gate was not visited and registered
         if (!gate) {
-            emitError(
-                getLocation(ctx),
+            error(
+                ctx,
                 llvm::Twine("gate operand'") + name + "' cannot be resolved");
+            return {};
+        }
+        if (qubits.size() != gate->qubits.size()
+            || parameterValues.size() != gate->parameters.size()) {
+            error(
+                ctx,
+                "gate '" + name + "' expects "
+                    + llvm::Twine(gate->qubits.size()) + " qubit operands and "
+                    + llvm::Twine(gate->parameters.size()) + " parameters");
+            return {};
+        }
+        for (mlir::Value qubit : qubits) {
+            if (qubit.getType() != mlir::quantum::QubitType::get(&context, 1)) {
+                error(ctx, "custom gate operands must be individual qubits");
+                return {};
+            }
+        }
+        if (mlir::failed(ensureGateDefinition(*gate, getLocation(ctx)))) {
             hadError = true;
             return {};
         }
-        // Emit defintion if the gate is used the first time
-        if (!gate->realized) {
-            mlir::OpBuilder::InsertionGuard guard(builder);
-            builder.setInsertionPoint(mainCircuit.getOperation());
-            auto result = emitGateDefition(*gate, getLocation(ctx), builder);
-            if (mlir::failed(result)) {
-                hadError = true;
-                return {};
-            }
-            // Visit gate body
-            auto &gateBlock = gate->gateOp.getBody().emplaceBlock();
-            for (auto type : gate->gateOp.getArgumentTypes())
-                gateBlock.addArgument(type, getLocation(ctx));
-
-            QASMScope gateScope;
-            for (auto [index, name] : llvm::enumerate(gate->parameters))
-                gateScope.declareCReg(
-                    name,
-                    1,
-                    gateBlock.getArgument(gate->qubits.size() + index));
-            for (auto [index, name] : llvm::enumerate(gate->qubits))
-                gateScope.declareQReg(name, 1, gateBlock.getArgument(index));
-
-            QASM2Visitor gateBodyVisitor{
-                context,
-                module,
-                qpuModule,
-                mainCircuit,
-                gate->filename,
-                gateScope,
-                gateLibrary,
-                includeResolver,
-                translationUnit};
-
-            gateBodyVisitor.builder.setInsertionPointToEnd(&gateBlock);
-            gateBodyVisitor.visitScope(gate->body);
-            if (gateBodyVisitor.failed()) {
-                hadError = true;
-                return {};
-            }
-
-            llvm::SmallVector<mlir::Value> returnValues;
-            returnValues.reserve(gate->qubits.size());
-            for (const auto &name : gate->qubits)
-                returnValues.push_back(
-                    gateScope.lookupQReg(name)->intervals.lookup(0).value);
-            mlir::quantum::ReturnOp::create(
-                gateBodyVisitor.builder,
-                getLocation(ctx),
-                returnValues);
-
-            builder.setInsertionPointToEnd(mainCircuit->getBlock());
-        }
-        // Call a previously visited GateDefinition
-        auto result = emitGateCall(
+        results = emitGateCall(
             *gate,
             getLocation(ctx),
             builder,
             qubits,
             parameterValues);
-        if (mlir::failed(result)) {
-            hadError = true;
-            return {};
-        }
-        results = std::move(*result);
     }
 
     // Write result qubit values back
@@ -862,11 +869,8 @@ QASM2Visitor::visitGateStatement(qasm2Parser::GateStatementContext* ctx)
         .filename = filename,
     };
 
-    if (!gateLibrary.insert(std::move(definition))) {
-        emitError(
-            getLocation(ctx),
-            llvm::Twine("gate '") + name + "' already defined");
-    }
+    if (!gateLibrary.insert(std::move(definition)))
+        error(ctx, llvm::Twine("gate '") + name + "' already defined");
     return {};
 }
 
@@ -896,7 +900,8 @@ std::any QASM2Visitor::visitMeasureArrowAssignmentStatement(
     unsigned quantumSize = qreg->size, classicalSize = creg->size;
     if (auto* designator = source->designator()) {
         auto index = parseUnsigned(designator->DecimalIntegerLiteral(), ctx);
-        if (!index || *index >= qreg->size) {
+        if (!index) return {};
+        if (*index >= qreg->size) {
             error(ctx, "invalid or out-of-range qubit index");
             return {};
         }
@@ -905,7 +910,8 @@ std::any QASM2Visitor::visitMeasureArrowAssignmentStatement(
     }
     if (auto* designator = destination->designator()) {
         auto index = parseUnsigned(designator->DecimalIntegerLiteral(), ctx);
-        if (!index || *index >= creg->size) {
+        if (!index) return {};
+        if (*index >= creg->size) {
             error(ctx, "invalid or out-of-range classical bit index");
             return {};
         }
@@ -919,16 +925,7 @@ std::any QASM2Visitor::visitMeasureArrowAssignmentStatement(
 
     const auto loc = getLocation(ctx);
     auto bitType = builder.getI1Type();
-    if (!creg->value) {
-        auto registerType = mlir::RankedTensorType::get({creg->size}, bitType);
-        creg->value = mlir::arith::ConstantOp::create(
-            builder,
-            loc,
-            registerType,
-            mlir::DenseElementsAttr::get(
-                registerType,
-                builder.getBoolAttr(false)));
-    }
+    getOrInitializeClassicalRegister(*creg, loc);
 
     auto measurementType = mlir::quantum::MeasurementType::get(&context, 1);
     auto tensorType = mlir::RankedTensorType::get({1}, bitType);
@@ -969,13 +966,7 @@ QASM2Visitor::visitResetStatement(qasm2Parser::ResetStatementContext* ctx)
 {
     auto operand = ctx->gateOperand();
     auto resolved = resolveQuantumOperand(operand);
-    if (!resolved) {
-        emitError(
-            getLocation(ctx),
-            llvm::Twine("gate operand'") + operand->getText()
-                + "' cannot be resolved");
-        return {};
-    }
+    if (!resolved) return {};
     auto qubit = resolved->value;
     auto result = mlir::quantum::ResetOp::create(
         builder,
@@ -1049,7 +1040,10 @@ QASM2Visitor::visitBarrierStatement(qasm2Parser::BarrierStatementContext* ctx)
 
 std::any QASM2Visitor::visitOpaqueDeclarationStatement(
     qasm2Parser::OpaqueDeclarationStatementContext* ctx)
-{ return visitChildren(ctx); }
+{
+    error(ctx, "opaque gate declarations are unsupported");
+    return {};
+}
 
 // ################################################################################
 // # Controlflow
@@ -1080,6 +1074,11 @@ std::any QASM2Visitor::visitIfStatement(qasm2Parser::IfStatementContext* ctx)
     // Match the comparison integer's width to the number of classical bits.
     const auto literal = ctx->DecimalIntegerLiteral()->getText();
 
+    if (llvm::APInt::getBitsNeeded(literal, 10) > creg->size) {
+        error(ctx, "comparison literal does not fit in the classical register");
+        return {};
+    }
+
     auto constant = mlir::arith::ConstantOp::create(
         builder,
         getLocation(ctx),
@@ -1101,14 +1100,9 @@ std::any QASM2Visitor::visitIfStatement(qasm2Parser::IfStatementContext* ctx)
 
     // Split qubits before entering either branch so both paths share the same
     // interval layout and no split results escape their defining region.
-    auto qubits = prepareConditionalQubits(operation);
-    if (qubits.empty()) {
-        error(
-            ctx,
-            "cannot lower conditional operation: no quantum operands could be "
-            "resolved");
-        return {};
-    }
+    auto preparedQubits = prepareConditionalQubits(operation);
+    if (mlir::failed(preparedQubits)) return {};
+    const auto &qubits = *preparedQubits;
 
     // A conditional measurement also updates classical state. Ensure that the
     // false path has a destination value to preserve if measurement is skipped.
@@ -1120,16 +1114,7 @@ std::any QASM2Visitor::visitIfStatement(qasm2Parser::IfStatementContext* ctx)
             error(ctx, "unknown measurement destination register");
             return {};
         }
-        if (!destination->value) {
-            auto type = mlir::RankedTensorType::get(
-                {destination->size},
-                builder.getI1Type());
-            destination->value = mlir::arith::ConstantOp::create(
-                builder,
-                getLocation(ctx),
-                type,
-                mlir::DenseElementsAttr::get(type, builder.getBoolAttr(false)));
-        }
+        getOrInitializeClassicalRegister(*destination, getLocation(ctx));
     }
 
     // Keep the incoming state for the false path. Both branches yield qubits
