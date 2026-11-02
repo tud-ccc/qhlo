@@ -5,12 +5,14 @@
 
 #include "QASM3Frontend.h"
 
+#include "QASM3TranslationUnit.h"
 #include "QASM3Visitor.h"
 #include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumOps.h"
 
 #include <antlr4-runtime.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Support/Path.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
@@ -20,11 +22,20 @@
 #include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/Location.h>
 
-mlir::OwningOpRef<mlir::ModuleOp> quantum::frontend::qasm3::parseQASM3(
-    llvm::StringRef,
+namespace quantum::frontend::qasm3 {
+
+mlir::OwningOpRef<mlir::ModuleOp> parseQASM3(
+    llvm::StringRef source,
     llvm::StringRef filename,
     mlir::MLIRContext &context)
 {
+    QASM3TranslationUnit translationUnit;
+    auto &rootSource = translationUnit.addSource(context, source, filename);
+    if (rootSource.failed()) return {};
+
+    auto* program = rootSource.parseProgram();
+    if (!program || rootSource.failed()) return {};
+
     auto moduleLoc = mlir::FileLineColLoc::get(&context, filename, 1, 1);
 
     mlir::OwningOpRef<mlir::ModuleOp> module =
@@ -36,7 +47,7 @@ mlir::OwningOpRef<mlir::ModuleOp> quantum::frontend::qasm3::parseQASM3(
         builder,
         moduleLoc,
         {},
-        "qasm_generated",
+        llvm::sys::path::stem(filename),
         mlir::ArrayAttr{});
     qpuModule.getBodyRegion().emplaceBlock();
 
@@ -50,5 +61,17 @@ mlir::OwningOpRef<mlir::ModuleOp> quantum::frontend::qasm3::parseQASM3(
         mlir::ArrayRef<mlir::NamedAttribute>{});
     mainCircuit.getBody().emplaceBlock();
 
+    // Shared state for this QASM translation unit.
+    QASMScope scope;
+
+    QASM3Visitor
+        visitor(context, *module, qpuModule, mainCircuit, filename, scope);
+
+    visitor.visit(program);
+
+    if (visitor.failed()) return {};
+
     return module;
 }
+
+} // namespace quantum::frontend::qasm3

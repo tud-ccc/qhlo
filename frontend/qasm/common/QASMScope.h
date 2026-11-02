@@ -40,6 +40,17 @@ public:
     ClassicalRegister &
     declareCReg(llvm::StringRef name, unsigned size, mlir::Value initialValue);
 
+    /// @brief Materializes a single qubit, splitting its register interval if
+    /// needed.
+    ///
+    /// @param reg Quantum register whose intervals are updated after a split.
+    /// @param index Zero-based index of the qubit within the register.
+    /// @param builder Builder used to emit a split at its current insertion
+    /// point.
+    /// @param loc Source location assigned to the emitted split operation.
+    /// @return The single-qubit value at index, reusing an existing value when
+    /// already isolated.
+    /// @pre index must be covered by an interval in reg.
     mlir::Value materializeQubit(
         QASMScope::QuantumRegister &reg,
         unsigned index,

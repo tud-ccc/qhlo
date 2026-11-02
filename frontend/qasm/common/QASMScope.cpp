@@ -51,11 +51,14 @@ mlir::Value QASMScope::materializeQubit(
 {
     auto &interval = reg.intervals.lookup(index);
 
+    // Reuse an already isolated qubit to avoid emitting a redundant split.
     if (interval.size() == 1) return interval.value;
 
     const unsigned leftSize = index - interval.start;
     const unsigned rightSize = interval.end - index - 1;
 
+    // Preserve register order: left remainder, selected qubit, right remainder.
+    // Omit empty remainders when the qubit lies at an interval boundary.
     llvm::SmallVector<mlir::Type> resultTypes;
 
     if (leftSize != 0)
@@ -75,6 +78,8 @@ mlir::Value QASMScope::materializeQubit(
         resultTypes,
         interval.value);
 
+    // Associate each split result with its half-open register range so later
+    // accesses use the new values instead of the consumed interval value.
     llvm::SmallVector<QubitInterval, 3> intervals;
     unsigned resultIndex = 0;
     if (leftSize != 0)

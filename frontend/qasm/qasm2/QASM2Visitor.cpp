@@ -476,6 +476,7 @@ std::any QASM2Visitor::visitOldStyleDeclarationStatement(
     }
 
     if (ctx->CREG()) {
+        // TODO: Create an tensor::empty op
         scope.declareCReg(name, *size, mlir::Value{});
         return {};
     }
