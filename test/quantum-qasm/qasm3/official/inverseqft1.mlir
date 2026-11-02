@@ -7,6 +7,6 @@
 // Coverage: Measurement assignment, casts and classical conditions.
 // Require a completed circuit, not just the current empty module/circuit skeleton.
 
-// CHECK: qpu.module @qasm_generated
+// CHECK: qpu.module @inverseqft1
 // CHECK: sym_name = "main"
 // CHECK: "qpu.return"

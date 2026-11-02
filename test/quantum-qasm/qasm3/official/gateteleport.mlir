@@ -7,6 +7,6 @@
 // Coverage: Subroutines, extern functions and conditional correction.
 // Require a completed circuit, not just the current empty module/circuit skeleton.
 
-// CHECK: qpu.module @qasm_generated
+// CHECK: qpu.module @gateteleport
 // CHECK: sym_name = "main"
 // CHECK: "qpu.return"

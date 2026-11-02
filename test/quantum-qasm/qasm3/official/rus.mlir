@@ -7,6 +7,6 @@
 // Coverage: While loops, subroutine calls and mathematical expressions.
 // Require a completed circuit, not just the current empty module/circuit skeleton.
 
-// CHECK: qpu.module @qasm_generated
+// CHECK: qpu.module @rus
 // CHECK: sym_name = "main"
 // CHECK: "qpu.return"

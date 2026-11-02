@@ -7,6 +7,6 @@
 // Coverage: Subroutine return values and syndrome-based correction.
 // Require a completed circuit, not just the current empty module/circuit skeleton.
 
-// CHECK: qpu.module @qasm_generated
+// CHECK: qpu.module @qec
 // CHECK: sym_name = "main"
 // CHECK: "qpu.return"

@@ -7,6 +7,6 @@
 // Coverage: Aliases, index sets and parameterized register sizes.
 // Require a completed circuit, not just the current empty module/circuit skeleton.
 
-// CHECK: qpu.module @qasm_generated
+// CHECK: qpu.module @varteleport
 // CHECK: sym_name = "main"
 // CHECK: "qpu.return"

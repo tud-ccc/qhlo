@@ -7,6 +7,6 @@
 // Coverage: Custom gates, integer inputs, loops and register slices.
 // Require a completed circuit, not just the current empty module/circuit skeleton.
 
-// CHECK: qpu.module @qasm_generated
+// CHECK: qpu.module @adder
 // CHECK: sym_name = "main"
 // CHECK: "qpu.return"

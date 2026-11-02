@@ -7,6 +7,6 @@
 // Coverage: Surface-code routines, extern declarations and nested loops.
 // Require a completed circuit, not just the current empty module/circuit skeleton.
 
-// CHECK: qpu.module @qasm_generated
+// CHECK: qpu.module @scqec
 // CHECK: sym_name = "main"
 // CHECK: "qpu.return"

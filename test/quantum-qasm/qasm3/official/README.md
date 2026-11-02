@@ -46,9 +46,9 @@ and checks for a main circuit with a `qpu.return` terminator. `stdgates.inc` is
 an include library, not a standalone test, so it has no wrapper.
 
 All wrappers initially use `XFAIL: *`. They retain successful frontend output
-as the expectation rather than accepting a parser error as success. The current
-QASM3 frontend ignores the source and creates an empty circuit skeleton; the
-terminator check deliberately prevents that skeleton from satisfying the tests.
+as the expectation rather than accepting a parser error as success. The QASM3 frontend parses the source, but lowering still creates an empty
+circuit skeleton; the terminator check deliberately prevents that skeleton from
+satisfying the tests.
 Remove each XFAIL marker as support becomes available and add representative
 FileCheck assertions for the features exercised by that example. Lit reports an
 unexpected pass when a marked wrapper starts satisfying its checks. These initial
@@ -57,10 +57,10 @@ checks are scaffolding, not exhaustive parsing, lowering or semantic validation.
 ## Known corpus and frontend limitations
 
 Most upstream files omit the optional OPENQASM version declaration. `teleport.qasm`
-uses `OPENQASM 3;`, while `arrays.qasm` uses `OPENQASM 3.0;`. The current frontend
-dispatcher requires a `3.x` declaration and does not skip block comments, so most
-inputs currently fail before reaching the QASM3 parser. The originals are kept
-unchanged to expose these compatibility gaps. Include resolution for the adjacent
+uses `OPENQASM 3;`, while `arrays.qasm` uses `OPENQASM 3.0;`. The frontend
+dispatcher accepts both forms and defaults to QASM3 when the
+version declaration is absent, skipping leading line and block comments.
+The originals are kept unchanged. Include resolution for the adjacent
 `stdgates.inc` will also need frontend support.
 
 These are upstream examples, not a guaranteed semantically valid conformance

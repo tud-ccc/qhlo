@@ -7,6 +7,6 @@
 // Coverage: Timing, calibration, physical qubits and nested loops.
 // Require a completed circuit, not just the current empty module/circuit skeleton.
 
-// CHECK: qpu.module @qasm_generated
+// CHECK: qpu.module @t1
 // CHECK: sym_name = "main"
 // CHECK: "qpu.return"

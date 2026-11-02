@@ -7,6 +7,6 @@
 // Coverage: Gate modifiers, angles, loops and compound assignments.
 // Require a completed circuit, not just the current empty module/circuit skeleton.
 
-// CHECK: qpu.module @qasm_generated
+// CHECK: qpu.module @ipe
 // CHECK: sym_name = "main"
 // CHECK: "qpu.return"

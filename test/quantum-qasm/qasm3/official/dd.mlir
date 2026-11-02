@@ -7,6 +7,6 @@
 // Coverage: Timing boxes, durationof and physical qubits.
 // Require a completed circuit, not just the current empty module/circuit skeleton.
 
-// CHECK: qpu.module @qasm_generated
+// CHECK: qpu.module @dd
 // CHECK: sym_name = "main"
 // CHECK: "qpu.return"
