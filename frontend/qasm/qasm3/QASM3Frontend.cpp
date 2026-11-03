@@ -78,6 +78,63 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM3(
 
     if (visitor.failed()) return {};
 
+    builder.setInsertionPointToEnd(&mainCircuit.getBody().front());
+    for (const auto &entry : scope.getQRegs()) {
+        for (const auto &interval : entry.getValue().intervals.intervals()) {
+            mlir::quantum::DeallocateOp::create(
+                builder,
+                moduleLoc,
+                interval.value);
+        }
+    }
+
+    llvm::SmallVector<mlir::Value> returnValues;
+    llvm::SmallVector<mlir::Type> returnTypes;
+    for (const auto &entry : scope.getCRegs()) {
+        auto value = entry.getValue().value;
+        if (!value) continue;
+        returnValues.push_back(value);
+        returnTypes.push_back(value.getType());
+    }
+
+    mlir::qpu::ReturnOp::create(builder, moduleLoc, returnValues);
+    mainCircuit.setFunctionType(
+        mlir::FunctionType::get(&context, {}, returnTypes));
+
+    builder.setInsertionPointToEnd(module->getBody());
+    auto entryPoint = mlir::func::FuncOp::create(
+        builder,
+        moduleLoc,
+        "qasm_main",
+        mlir::FunctionType::get(&context, {}, returnTypes));
+    entryPoint.setPublic();
+    builder.setInsertionPointToStart(entryPoint.addEntryBlock());
+
+    llvm::SmallVector<mlir::Value> outputs;
+    outputs.reserve(returnTypes.size());
+    for (auto type : returnTypes) {
+        auto tensorType = mlir::cast<mlir::RankedTensorType>(type);
+        outputs.push_back(
+            mlir::tensor::EmptyOp::create(
+                builder,
+                moduleLoc,
+                tensorType.getShape(),
+                tensorType.getElementType()));
+    }
+
+    auto circuitRef = mlir::SymbolRefAttr::get(
+        &context,
+        qpuModule.getSymName(),
+        {mlir::FlatSymbolRefAttr::get(&context, mainCircuit.getSymName())});
+    auto execution = mlir::qpu::ExecuteOp::create(
+        builder,
+        moduleLoc,
+        returnTypes,
+        circuitRef,
+        mlir::ValueRange{},
+        outputs);
+    mlir::func::ReturnOp::create(builder, moduleLoc, execution.getResults());
+
     return module;
 }
 

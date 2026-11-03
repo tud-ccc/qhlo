@@ -21,6 +21,12 @@
 #include <string>
 
 namespace quantum::frontend::qasm3 {
+struct QuantumOperand {
+    QASMScope::QuantumRegister* reg;
+    std::optional<unsigned> index;
+    mlir::Value value;
+};
+
 class QASM3Visitor final : public qasm3ParserBaseVisitor {
 public:
     QASM3Visitor(
@@ -59,7 +65,16 @@ public:
     std::any
     visitGateStatement(qasm3Parser::GateStatementContext* ctx) override;
 
+    std::any
+    visitGateCallStatement(qasm3Parser::GateCallStatementContext* ctx) override;
+
+    std::any
+    visitBarrierStatement(qasm3Parser::BarrierStatementContext* ctx) override;
+
 private:
+    mlir::LogicalResult
+    ensureGateDefinition(GateDefinition &gate, mlir::Location loc);
+
     mlir::Location getLocation(antlr4::ParserRuleContext* ctx) const;
 
     void error(antlr4::ParserRuleContext* ctx, const llvm::Twine &message);

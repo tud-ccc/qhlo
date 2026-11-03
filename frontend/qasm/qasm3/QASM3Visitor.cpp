@@ -5,6 +5,7 @@
 
 #include "QASM3Visitor.h"
 
+#include "NativeQuantumGate.h"
 #include "QASMScope.h"
 #include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumOps.h"
@@ -77,7 +78,106 @@ void QASM3Visitor::error(
     mlir::emitError(getLocation(ctx)) << message;
 }
 
+mlir::LogicalResult
+QASM3Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
+{
+    if (gate.realized) return mlir::success();
+
+    mlir::OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(mainCircuit.getOperation());
+    // Input types
+    llvm::SmallVector<mlir::Type> inputTys;
+    inputTys.reserve(gate.qubits.size() + gate.parameters.size());
+    inputTys.append(
+        gate.qubits.size(),
+        mlir::quantum::QubitType::get(&context, 1));
+    inputTys.append(gate.parameters.size(), builder.getF64Type());
+
+    // Output types
+    llvm::SmallVector<mlir::Type> outputTys;
+    outputTys.reserve(gate.qubits.size());
+    outputTys.append(
+        gate.qubits.size(),
+        mlir::quantum::QubitType::get(&context, 1));
+
+    auto ty = mlir::FunctionType::get(
+        &context,
+        mlir::TypeRange(inputTys),
+        mlir::TypeRange(outputTys));
+
+    auto op = mlir::quantum::GateOp::create(
+        builder,
+        loc,
+        gate.name,
+        ty,
+        mlir::ArrayRef<mlir::NamedAttribute>{});
+
+    gate.gateOp = op;
+    gate.realized = true;
+
+    // Visit gate body
+    auto &gateBlock = gate.gateOp.getBody().emplaceBlock();
+    for (auto type : gate.gateOp.getArgumentTypes())
+        gateBlock.addArgument(type, loc);
+
+    QASMScope gateScope;
+    for (auto [index, name] : llvm::enumerate(gate.parameters))
+        gateScope.declareCReg(
+            name,
+            1,
+            gateBlock.getArgument(gate.qubits.size() + index));
+    for (auto [index, name] : llvm::enumerate(gate.qubits))
+        gateScope.declareQReg(name, 1, gateBlock.getArgument(index));
+
+    QASM3Visitor gateBodyVisitor{
+        context,
+        module,
+        qpuModule,
+        mainCircuit,
+        gate.filename,
+        gateScope,
+        gateLibrary};
+
+    gateBodyVisitor.builder.setInsertionPointToEnd(&gateBlock);
+    gateBodyVisitor.visitScope(gate.body);
+    if (gateBodyVisitor.failed()) {
+        hadError = true;
+        return mlir::failure();
+    }
+
+    llvm::SmallVector<mlir::Value> returnValues;
+    returnValues.reserve(gate.qubits.size());
+    for (const auto &name : gate.qubits)
+        returnValues.push_back(
+            gateScope.lookupQReg(name)->intervals.lookup(0).value);
+    mlir::quantum::ReturnOp::create(gateBodyVisitor.builder, loc, returnValues);
+
+    return mlir::success();
+}
+
 namespace {
+
+llvm::SmallVector<mlir::Value> emitGateCall(
+    const GateDefinition &gate,
+    mlir::Location loc,
+    mlir::OpBuilder &builder,
+    mlir::ValueRange qubits,
+    mlir::ValueRange parameters)
+{
+    llvm::SmallVector<mlir::Value> operands;
+    operands.reserve(qubits.size() + parameters.size());
+    operands.append(qubits.begin(), qubits.end());
+    operands.append(parameters.begin(), parameters.end());
+
+    auto op = mlir::quantum::GateCallOp::create(
+        builder,
+        loc,
+        gate.gateOp,
+        mlir::ValueRange(operands));
+
+    auto results = op->getResults();
+    return llvm::SmallVector<mlir::Value>(results.begin(), results.end());
+}
 
 llvm::FailureOr<mlir::Type>
 getMlirType(mlir::MLIRContext &context, qasm3Parser::ScalarTypeContext* type)
@@ -125,6 +225,173 @@ QASM3Visitor::visitGateStatement(qasm3Parser::GateStatementContext* ctx)
     return {};
 }
 
+std::any
+QASM3Visitor::visitGateCallStatement(qasm3Parser::GateCallStatementContext* ctx)
+{
+    if (!ctx->Identifier() || !ctx->gateModifier().empty()
+        || ctx->designator()) {
+        error(ctx, "gate modifiers, durations and gphase are not supported");
+        return {};
+    }
+
+    /// Gate name for emission
+    const auto name = ctx->Identifier()->getText();
+
+    llvm::SmallVector<mlir::Value> parameterValues;
+    if (auto* classicOperands = ctx->expressionList()) {
+        const auto expressions = classicOperands->expression();
+        parameterValues.reserve(expressions.size());
+        for (auto* expression : expressions) {
+            auto resolved = expression->accept(this);
+            if (hadError) return {};
+
+            mlir::Value value;
+            if (auto* operand = std::any_cast<mlir::Value>(&resolved)) {
+                value = *operand;
+            } else if (auto* integer = std::any_cast<int64_t>(&resolved)) {
+                value = mlir::arith::ConstantOp::create(
+                    builder,
+                    getLocation(expression),
+                    builder.getF64FloatAttr(static_cast<double>(*integer)));
+            } else if (auto* real = std::any_cast<double>(&resolved)) {
+                value = mlir::arith::ConstantOp::create(
+                    builder,
+                    getLocation(expression),
+                    builder.getF64FloatAttr(*real));
+            }
+
+            if (!value || !value.getType().isF64()) {
+                error(expression, "gate parameters must have type f64");
+                return {};
+            }
+            parameterValues.push_back(value);
+        }
+    }
+
+    llvm::SmallVector<QuantumOperand> qubitValues;
+    // In QASM3 a gate has at least one qubit operand
+    auto qubitOperands = ctx->gateOperandList();
+    const auto operands = qubitOperands->gateOperand();
+    qubitValues.reserve(operands.size());
+    for (auto* operand : operands) {
+        auto* indexed = operand->indexedIdentifier();
+        if (!indexed) {
+            error(operand, "hardware qubit operands are not supported");
+            return {};
+        }
+
+        const auto id = indexed->Identifier()->getText();
+        auto* reg = scope.lookupQReg(id);
+        if (!reg) {
+            error(operand, "unknown quantum register '" + id + "'");
+            return {};
+        }
+
+        const auto indices = indexed->indexOperator();
+        if (indices.empty()) {
+            auto &interval = reg->intervals.lookup(0);
+            if (interval.size() != reg->size) {
+                error(
+                    operand,
+                    "whole-register operands after qubit splitting are "
+                    "unsupported");
+                return {};
+            }
+            qubitValues.push_back({reg, std::nullopt, interval.value});
+            continue;
+        }
+
+        if (indices.size() != 1 || indices[0]->setExpression()
+            || !indices[0]->rangeExpression().empty()
+            || indices[0]->expression().size() != 1) {
+            error(operand, "expected a single constant qubit index");
+            return {};
+        }
+
+        auto resolved = indices[0]->expression(0)->accept(this);
+        if (hadError) return {};
+        auto* index = std::any_cast<int64_t>(&resolved);
+        if (!index || *index < 0 || *index >= reg->size) {
+            error(
+                operand,
+                "expected a constant qubit index within the register");
+            return {};
+        }
+
+        const auto qubitIndex = static_cast<unsigned>(*index);
+        qubitValues.push_back(
+            {reg,
+             qubitIndex,
+             scope.materializeQubit(
+                 *reg,
+                 qubitIndex,
+                 builder,
+                 getLocation(operand))});
+    }
+
+    llvm::SmallVector<mlir::Value> qubits;
+    qubits.reserve(qubitValues.size());
+    for (const auto &operand : qubitValues) qubits.push_back(operand.value);
+
+    llvm::SmallVector<mlir::Value> results;
+    if (auto spec = lookupNativeQuantumGate(name)) {
+        auto emitted = emitNativeGate(
+            *spec,
+            getLocation(ctx),
+            builder,
+            qubits,
+            parameterValues);
+        if (mlir::failed(emitted)) {
+            hadError = true;
+            return {};
+        }
+        results = std::move(*emitted);
+    } else {
+        // Lookup gate definition
+        auto gate = gateLibrary.lookup(name);
+        // Gate was not visited and registered
+        if (!gate) {
+            error(
+                ctx,
+                llvm::Twine("gate operand'") + name + "' cannot be resolved");
+            return {};
+        }
+        if (qubits.size() != gate->qubits.size()
+            || parameterValues.size() != gate->parameters.size()) {
+            error(
+                ctx,
+                "gate '" + name + "' expects "
+                    + llvm::Twine(gate->qubits.size()) + " qubit operands and "
+                    + llvm::Twine(gate->parameters.size()) + " parameters");
+            return {};
+        }
+        for (mlir::Value qubit : qubits) {
+            if (qubit.getType() != mlir::quantum::QubitType::get(&context, 1)) {
+                error(ctx, "custom gate operands must be individual qubits");
+                return {};
+            }
+        }
+        if (mlir::failed(ensureGateDefinition(*gate, getLocation(ctx)))) {
+            hadError = true;
+            return {};
+        }
+        results = emitGateCall(
+            *gate,
+            getLocation(ctx),
+            builder,
+            qubits,
+            parameterValues);
+    }
+
+    for (auto [operand, result] : llvm::zip_equal(qubitValues, results))
+        if (operand.index)
+            operand.reg->intervals.lookup(*operand.index).value = result;
+        else
+            operand.reg->intervals.set(0, operand.reg->size, result);
+
+    return {};
+}
+
 // ################################################################################
 // # Program and Version
 // ################################################################################
@@ -153,7 +420,7 @@ QASM3Visitor::visitLiteralExpression(qasm3Parser::LiteralExpressionContext* ctx)
     // Identifier
     if (auto node = ctx->Identifier()) {
         auto id = node->getText();
-        // search for identifier
+        if (auto* parameter = scope.lookupCReg(id)) return parameter->value;
         error(ctx, "unknown parameter '" + id + "'");
         return {};
     }
@@ -306,6 +573,8 @@ QASM3Visitor::visitResetStatement(qasm3Parser::ResetStatementContext* ctx)
         return {};
     }
 
+    // Earlier indexed accesses may have split the register into intervals with
+    // separate SSA values, so resetting the whole register must cover each one.
     for (const auto &interval : qreg->intervals.intervals()) {
         auto reset = mlir::quantum::ResetOp::create(
             builder,
@@ -314,6 +583,79 @@ QASM3Visitor::visitResetStatement(qasm3Parser::ResetStatementContext* ctx)
             interval.value);
         qreg->intervals.lookup(interval.start).value = reset.getResult();
     }
+    return {};
+}
+
+std::any
+QASM3Visitor::visitBarrierStatement(qasm3Parser::BarrierStatementContext* ctx)
+{
+    const auto loc = getLocation(ctx);
+    llvm::SmallVector<QuantumOperand> requests;
+    if (auto* list = ctx->gateOperandList()) {
+        for (auto* operand : list->gateOperand()) {
+            auto* indexed = operand->indexedIdentifier();
+            if (!indexed) {
+                error(operand, "hardware qubit operands are not supported");
+                return {};
+            }
+            const auto name = indexed->Identifier()->getText();
+            auto* reg = scope.lookupQReg(name);
+            if (!reg) {
+                error(operand, "unknown quantum register '" + name + "'");
+                return {};
+            }
+
+            std::optional<unsigned> index;
+            const auto indices = indexed->indexOperator();
+            if (!indices.empty()) {
+                if (indices.size() != 1 || indices[0]->setExpression()
+                    || !indices[0]->rangeExpression().empty()
+                    || indices[0]->expression().size() != 1) {
+                    error(operand, "expected a single constant qubit index");
+                    return {};
+                }
+                auto resolved = indices[0]->expression(0)->accept(this);
+                if (hadError) return {};
+                auto* value = std::any_cast<int64_t>(&resolved);
+                if (!value || *value < 0 || *value >= reg->size) {
+                    error(
+                        operand,
+                        "expected a constant qubit index within the register");
+                    return {};
+                }
+                index = static_cast<unsigned>(*value);
+                scope.materializeQubit(*reg, *index, builder, loc);
+            }
+            requests.push_back({reg, index, {}});
+        }
+    } else {
+        for (const auto &entry : scope.getQRegs())
+            requests.push_back(
+                {scope.lookupQReg(entry.getKey()), std::nullopt, {}});
+    }
+
+    // Resolve intervals after all indexed operands have split their registers.
+    llvm::SmallVector<QuantumOperand> operands;
+    llvm::SmallVector<mlir::Value> values;
+    llvm::SmallVector<mlir::Type> types;
+    for (const auto &request : requests) {
+        for (const auto &interval : request.reg->intervals.intervals()) {
+            if (request.index && interval.start != *request.index) continue;
+            if (llvm::any_of(operands, [&](const QuantumOperand &existing) {
+                    return existing.reg == request.reg
+                           && existing.index == interval.start;
+                }))
+                continue;
+            operands.push_back({request.reg, interval.start, interval.value});
+            values.push_back(interval.value);
+            types.push_back(interval.value.getType());
+        }
+    }
+
+    auto barrier =
+        mlir::quantum::BarrierOp::create(builder, loc, types, values);
+    for (auto [operand, result] : llvm::zip(operands, barrier->getResults()))
+        operand.reg->intervals.lookup(*operand.index).value = result;
     return {};
 }
 
