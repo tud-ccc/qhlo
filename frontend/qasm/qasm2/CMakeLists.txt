@@ -95,7 +95,6 @@ set(LLVM_REQUIRES_EH ON)
 add_mlir_library(QuantumQASM2Frontend
     QASM2Frontend.cpp
     QASM2Visitor.cpp
-    GateLibrary.cpp
 
     EXCLUDE_FROM_LIBMLIR
 

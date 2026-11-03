@@ -39,14 +39,16 @@ QASM3Visitor::QASM3Visitor(
     mlir::qpu::QPUModuleOp qpuModule,
     mlir::qpu::CircuitOp mainCircuit,
     llvm::StringRef filename,
-    QASMScope &scope)
+    QASMScope &scope,
+    GateLibrary &gateLibrary)
         : context(context),
           module(module),
           qpuModule(qpuModule),
           builder(&context),
           mainCircuit(mainCircuit),
           filename(filename.str()),
-          scope(scope)
+          scope(scope),
+          gateLibrary(gateLibrary)
 {
     context.loadDialect<mlir::arith::ArithDialect, mlir::math::MathDialect>();
     builder.setInsertionPointToEnd(&mainCircuit.getBody().front());
@@ -89,6 +91,39 @@ getMlirType(mlir::MLIRContext &context, qasm3Parser::ScalarTypeContext* type)
 // ################################################################################
 // # Generate Quantum MLIR gates
 // ################################################################################
+
+std::any
+QASM3Visitor::visitGateStatement(qasm3Parser::GateStatementContext* ctx)
+{
+    const std::string name = ctx->Identifier()->getText();
+
+    llvm::SmallVector<std::string> parameters;
+    llvm::SmallVector<std::string> qubits;
+
+    const auto identifierLists = ctx->identifierList();
+    std::size_t qubitListIndex = 0;
+    if (ctx->LPAREN() && identifierLists.size() == 2) {
+        for (auto* identifier : identifierLists[0]->Identifier())
+            parameters.push_back(identifier->getText());
+
+        qubitListIndex = 1;
+    }
+
+    for (auto* identifier : identifierLists[qubitListIndex]->Identifier())
+        qubits.push_back(identifier->getText());
+
+    GateDefinition definition{
+        .name = ctx->Identifier()->getText(),
+        .parameters = parameters,
+        .qubits = qubits,
+        .body = ctx->scope(),
+        .filename = filename,
+    };
+
+    if (!gateLibrary.insert(std::move(definition)))
+        error(ctx, llvm::Twine("gate '") + name + "' already defined");
+    return {};
+}
 
 // ################################################################################
 // # Program and Version

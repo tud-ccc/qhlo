@@ -6,6 +6,7 @@
 #ifndef QUANTUM_MLIR_FRONTEND_QASM_QASM3_QASM3VISITOR_H
 #define QUANTUM_MLIR_FRONTEND_QASM_QASM3_QASM3VISITOR_H
 
+#include "GateLibrary.h"
 #include "QASMScope.h"
 #include "qasm3Parser.h"
 #include "qasm3ParserBaseVisitor.h"
@@ -28,7 +29,8 @@ public:
         mlir::qpu::QPUModuleOp qpuModule,
         mlir::qpu::CircuitOp mainCircuit,
         llvm::StringRef filename,
-        QASMScope &scope);
+        QASMScope &scope,
+        GateLibrary &gateLibrary);
 
     bool failed() const { return hadError; }
 
@@ -54,6 +56,9 @@ public:
     std::any
     visitResetStatement(qasm3Parser::ResetStatementContext* ctx) override;
 
+    std::any
+    visitGateStatement(qasm3Parser::GateStatementContext* ctx) override;
+
 private:
     mlir::Location getLocation(antlr4::ParserRuleContext* ctx) const;
 
@@ -68,6 +73,7 @@ private:
     std::string filename;
 
     QASMScope &scope;
+    GateLibrary &gateLibrary;
 
     // TODO: write hadError on failure
     bool hadError = false;

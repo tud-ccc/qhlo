@@ -63,9 +63,16 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM3(
 
     // Shared state for this QASM translation unit.
     QASMScope scope;
+    GateLibrary gateLibrary;
 
-    QASM3Visitor
-        visitor(context, *module, qpuModule, mainCircuit, filename, scope);
+    QASM3Visitor visitor(
+        context,
+        *module,
+        qpuModule,
+        mainCircuit,
+        filename,
+        scope,
+        gateLibrary);
 
     visitor.visit(program);
 
