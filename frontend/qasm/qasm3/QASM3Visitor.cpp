@@ -182,8 +182,8 @@ llvm::SmallVector<mlir::Value> emitGateCall(
 llvm::FailureOr<mlir::Type>
 getMlirType(mlir::MLIRContext &context, qasm3Parser::ScalarTypeContext* type)
 {
-    if (type->ANGLE()) return llvm::failure();
     if (type->BIT()) return mlir::Builder(&context).getI1Type();
+    return llvm::failure();
 }
 
 } // namespace
