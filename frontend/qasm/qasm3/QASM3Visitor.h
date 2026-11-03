@@ -56,6 +56,15 @@ public:
     std::any
     visitLiteralExpression(qasm3Parser::LiteralExpressionContext* ctx) override;
 
+    std::any
+    visitMeasureExpression(qasm3Parser::MeasureExpressionContext* ctx) override;
+
+    std::any visitMeasureArrowAssignmentStatement(
+        qasm3Parser::MeasureArrowAssignmentStatementContext* ctx) override;
+
+    std::any visitAssignmentStatement(
+        qasm3Parser::AssignmentStatementContext* ctx) override;
+
     std::any visitConstDeclarationStatement(
         qasm3Parser::ConstDeclarationStatementContext* ctx) override;
 
@@ -72,6 +81,11 @@ public:
     visitBarrierStatement(qasm3Parser::BarrierStatementContext* ctx) override;
 
 private:
+    // A null destination discards the measurement result.
+    mlir::LogicalResult emitMeasurement(
+        qasm3Parser::MeasureExpressionContext &measurement,
+        qasm3Parser::IndexedIdentifierContext* destination);
+
     mlir::LogicalResult
     ensureGateDefinition(GateDefinition &gate, mlir::Location loc);
 

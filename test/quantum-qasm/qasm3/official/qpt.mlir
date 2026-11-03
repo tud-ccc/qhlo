@@ -4,7 +4,6 @@
 // Expected lowering of scalar q/c using the frontend's one-element register ABI.
 // Empty pre/post gates are identities. Preserve reset and both barriers, and
 // thread each updated qubit through subsequent operations to avoid cloning.
-// This test remains failing until QASM3 lowering implements this program.
 
 // CHECK-LABEL: module {
 // CHECK-NEXT: qpu.module @qpt {
@@ -18,6 +17,7 @@
 // CHECK-NEXT: }) : () -> ()
 // CHECK-NEXT: "qpu.circuit"() <{function_type = () -> tensor<1xi1>, sym_name = "main"}> ({
 // CHECK: %[[Q:.*]] = "quantum.alloc"() : () -> !quantum.qubit<1>
+// CHECK-NEXT: %[[C:.*]] = arith.constant dense<false> : tensor<1xi1>
 // CHECK: %[[RESET:.*]] = "quantum.reset"(%[[Q]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK-NEXT: %[[PRE:.*]] = "quantum.call"(%[[RESET]]) <{callee = @pre}> : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK-NEXT: %[[BARRIER1:.*]] = "quantum.barrier"(%[[PRE]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
@@ -26,9 +26,9 @@
 // CHECK-NEXT: %[[POST:.*]] = "quantum.call"(%[[BARRIER2]]) <{callee = @post}> : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK: %[[MEAS:.*]], %[[MEASURED_Q:.*]] = "quantum.measure"(%[[POST]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
 // CHECK-NEXT: %[[BITS:.*]] = "qpu.to_bits"(%[[MEAS]]) : (!quantum.measurement<1>) -> tensor<1xi1>
-// Whole-scalar assignment replaces c; no partial-register insertion is needed.
+// CHECK-NEXT: %[[ASSIGNED:.*]] = tensor.insert_slice %[[BITS]] into %[[C]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
 // CHECK-NEXT: "quantum.deallocate"(%[[MEASURED_Q]]) : (!quantum.qubit<1>) -> ()
-// CHECK-NEXT: "qpu.return"(%[[BITS]]) : (tensor<1xi1>) -> ()
+// CHECK-NEXT: "qpu.return"(%[[ASSIGNED]]) : (tensor<1xi1>) -> ()
 // CHECK-NEXT: }) : () -> ()
 // CHECK-NEXT: }
 // CHECK-NEXT: func.func @qasm_main() -> tensor<1xi1> {

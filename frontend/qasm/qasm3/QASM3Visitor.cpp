@@ -447,6 +447,13 @@ QASM3Visitor::visitLiteralExpression(qasm3Parser::LiteralExpressionContext* ctx)
     return {};
 }
 
+std::any
+QASM3Visitor::visitMeasureExpression(qasm3Parser::MeasureExpressionContext* ctx)
+{
+    error(ctx, "Measurement Expression not implemented");
+    return {};
+}
+
 // ################################################################################
 // # Declarations
 // ################################################################################
@@ -505,6 +512,7 @@ std::any QASM3Visitor::visitClassicalDeclarationStatement(
         int64_t size = 1;
         // Check if single qubit or register
         if (auto des = ty->designator()) {
+            // Parse classical expression
             if (auto expr = des->expression()) {
                 auto value = expr->accept(this);
                 // Expression must be "integer literal" or "const integer"
@@ -548,6 +556,156 @@ std::any QASM3Visitor::visitConstDeclarationStatement(
 // ################################################################################
 // # Statements
 // ################################################################################
+
+mlir::LogicalResult QASM3Visitor::emitMeasurement(
+    qasm3Parser::MeasureExpressionContext &measurement,
+    qasm3Parser::IndexedIdentifierContext* destination)
+{
+    auto* source = measurement.gateOperand()->indexedIdentifier();
+    if (!source) {
+        error(&measurement, "hardware qubit operands are not supported");
+        return mlir::failure();
+    }
+    const std::string quantumName = source->Identifier()->getText();
+    auto* qreg = scope.lookupQReg(quantumName);
+    if (!qreg) {
+        error(&measurement, "unknown quantum register '" + quantumName + "'");
+        return mlir::failure();
+    }
+    QASMScope::ClassicalRegister* creg = nullptr;
+    if (destination) {
+        const auto classicalName = destination->Identifier()->getText();
+        creg = scope.lookupCReg(classicalName);
+        if (!creg) {
+            error(
+                &measurement,
+                "unknown classical register '" + classicalName + "'");
+            return mlir::failure();
+        }
+        auto type =
+            mlir::dyn_cast<mlir::RankedTensorType>(creg->value.getType());
+        if (!type || type.getRank() != 1 || !type.getElementType().isInteger(1)
+            || type.getDimSize(0) != creg->size) {
+            error(
+                destination,
+                "measurement destination must be a bit register");
+            return mlir::failure();
+        }
+    }
+
+    auto resolveIndex = [&](qasm3Parser::IndexedIdentifierContext* operand,
+                            unsigned size,
+                            unsigned &offset,
+                            unsigned &count) {
+        const auto indices = operand->indexOperator();
+        if (indices.empty()) return true;
+        if (indices.size() != 1 || indices[0]->setExpression()
+            || !indices[0]->rangeExpression().empty()
+            || indices[0]->expression().size() != 1) {
+            error(operand, "expected a single constant measurement index");
+            return false;
+        }
+        auto resolved = indices[0]->expression(0)->accept(this);
+        if (hadError) return false;
+        auto* index = std::any_cast<int64_t>(&resolved);
+        if (!index || *index < 0 || *index >= size) {
+            error(
+                operand,
+                "expected a constant measurement index within the register");
+            return false;
+        }
+        offset = static_cast<unsigned>(*index);
+        count = 1;
+        return true;
+    };
+
+    unsigned quantumOffset = 0, classicalOffset = 0;
+    unsigned quantumSize = qreg->size;
+    unsigned classicalSize = creg ? creg->size : 0;
+    if (!resolveIndex(source, qreg->size, quantumOffset, quantumSize))
+        return mlir::failure();
+    if (destination
+        && !resolveIndex(
+            destination,
+            creg->size,
+            classicalOffset,
+            classicalSize))
+        return mlir::failure();
+    if (creg && quantumSize != classicalSize) {
+        error(
+            &measurement,
+            "measurement source and destination sizes must match");
+        return mlir::failure();
+    }
+
+    const auto loc = getLocation(&measurement);
+    auto bitType = builder.getI1Type();
+
+    auto measurementType = mlir::quantum::MeasurementType::get(&context, 1);
+    auto tensorType = mlir::RankedTensorType::get({1}, bitType);
+    for (unsigned i = 0; i < quantumSize; ++i) {
+        const unsigned index = quantumOffset + i;
+        auto qubit = scope.materializeQubit(*qreg, index, builder, loc);
+        auto measurement = mlir::quantum::MeasureOp::create(
+            builder,
+            loc,
+            measurementType,
+            qubit.getType(),
+            qubit);
+        qreg->intervals.lookup(index).value = measurement.getResult();
+        if (!creg) continue;
+        auto result = mlir::qpu::ToBitsOp::create(
+            builder,
+            loc,
+            tensorType,
+            measurement.getMeasurement());
+        creg->value = mlir::tensor::InsertSliceOp::create(
+            builder,
+            loc,
+            result.getResult(),
+            creg->value,
+            llvm::ArrayRef<mlir::OpFoldResult>{
+                builder.getIndexAttr(classicalOffset + i)},
+            llvm::ArrayRef<mlir::OpFoldResult>{builder.getIndexAttr(1)},
+            llvm::ArrayRef<mlir::OpFoldResult>{builder.getIndexAttr(1)});
+    }
+    return mlir::success();
+}
+
+std::any QASM3Visitor::visitAssignmentStatement(
+    qasm3Parser::AssignmentStatementContext* ctx)
+{
+    if (ctx->CompoundAssignmentOperator()) {
+        error(ctx, "compound assignment operators are not supported");
+        return {};
+    }
+    if (auto* measurement = ctx->measureExpression()) {
+        if (llvm::failed(
+                emitMeasurement(*measurement, ctx->indexedIdentifier()))) {
+            return {};
+        }
+        return {};
+    }
+    if (ctx->quantumCallExpression()) {
+        error(ctx, "quantum call assignments are not supported");
+        return {};
+    }
+    error(ctx, "classical expression assignments are not supported");
+    return {};
+}
+
+std::any QASM3Visitor::visitMeasureArrowAssignmentStatement(
+    qasm3Parser::MeasureArrowAssignmentStatementContext* ctx)
+{
+    auto* measurement = ctx->measureExpression();
+    if (!measurement) {
+        error(ctx, "quantum call statements are not supported");
+        return {};
+    }
+    if (llvm::failed(emitMeasurement(*measurement, ctx->indexedIdentifier())))
+        return {};
+    return {};
+}
 
 std::any
 QASM3Visitor::visitResetStatement(qasm3Parser::ResetStatementContext* ctx)
