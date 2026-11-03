@@ -13,6 +13,7 @@
 
 #include <any>
 #include <charconv>
+#include <limits>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/Twine.h>
@@ -458,26 +459,54 @@ QASM3Visitor::visitMeasureExpression(qasm3Parser::MeasureExpressionContext* ctx)
 // # Declarations
 // ################################################################################
 
+mlir::FailureOr<unsigned>
+QASM3Visitor::resolveRegisterSize(qasm3Parser::DesignatorContext* designator)
+{
+    if (!designator) return 1u;
+
+    auto* expression = designator->expression();
+    if (!expression) {
+        error(designator, "expected expression inside designator");
+        return mlir::failure();
+    }
+
+    while (auto* parentheses =
+               dynamic_cast<qasm3Parser::ParenthesisExpressionContext*>(
+                   expression))
+        expression = parentheses->expression();
+
+    // The default visitor returns child values for unsupported expressions,
+    // which would otherwise interpret expressions such as -1 as positive sizes.
+    if (!dynamic_cast<qasm3Parser::LiteralExpressionContext*>(expression)) {
+        error(designator, "expected a constant integer register length");
+        return mlir::failure();
+    }
+
+    auto resolved = expression->accept(this);
+    if (hadError) return mlir::failure();
+
+    auto* size = std::any_cast<int64_t>(&resolved);
+    if (!size) {
+        error(designator, "expected a constant integer register length");
+        return mlir::failure();
+    }
+    if (*size <= 0 || *size > std::numeric_limits<unsigned>::max()) {
+        error(
+            designator,
+            "register length must be a positive unsigned integer");
+        return mlir::failure();
+    }
+
+    return static_cast<unsigned>(*size);
+}
+
 std::any QASM3Visitor::visitQuantumDeclarationStatement(
     qasm3Parser::QuantumDeclarationStatementContext* ctx)
 {
-    int64_t size = 1;
-    // Check if single qubit or register
-    if (auto des = ctx->qubitType()->designator()) {
-        if (auto expr = des->expression()) {
-            auto value = expr->accept(this);
-            // expression must be 1) integer literal, 2) const integer variable
-            if (value.type() == typeid(int64_t))
-                size = std::any_cast<int64_t>(value);
-            else
-                error(ctx, "Expected const quantum register length expression");
-            // Extract constant value into variable size
-        } else {
-            error(ctx, "Expected expression inside designator");
-        }
-    }
+    auto size = resolveRegisterSize(ctx->qubitType()->designator());
+    if (mlir::failed(size)) return {};
 
-    auto type = mlir::quantum::QubitType::get(&context, size);
+    auto type = mlir::quantum::QubitType::get(&context, *size);
     auto alloc = mlir::quantum::AllocOp::create(
         builder,
         getLocation(ctx),
@@ -486,7 +515,7 @@ std::any QASM3Visitor::visitQuantumDeclarationStatement(
 
     // Add the qubit to the scope
     auto id = ctx->Identifier()->getText();
-    scope.declareQReg(id, size, alloc.getResult());
+    scope.declareQReg(id, *size, alloc.getResult());
 
     return {};
 }
@@ -509,33 +538,17 @@ std::any QASM3Visitor::visitClassicalDeclarationStatement(
             return {};
         }
 
-        int64_t size = 1;
-        // Check if single qubit or register
-        if (auto des = ty->designator()) {
-            // Parse classical expression
-            if (auto expr = des->expression()) {
-                auto value = expr->accept(this);
-                // Expression must be "integer literal" or "const integer"
-                if (value.type() == typeid(int64_t)) {
-                    size = std::any_cast<int64_t>(value);
-                } else {
-                    error(ctx, "Expected const scalar array length expression");
-                    return {};
-                }
-            } else {
-                error(ctx, "Expected expression inside designator");
-                return {};
-            }
-        }
+        auto size = resolveRegisterSize(ty->designator());
+        if (mlir::failed(size)) return {};
 
-        auto rankedTy = mlir::RankedTensorType::get({size}, *mlirTy);
+        auto rankedTy = mlir::RankedTensorType::get({*size}, *mlirTy);
         auto op = mlir::arith::ConstantOp::create(
             builder,
             getLocation(ctx),
             rankedTy,
             mlir::DenseElementsAttr::get(rankedTy, builder.getBoolAttr(false)));
 
-        scope.declareCReg(id, size, op.getResult());
+        scope.declareCReg(id, *size, op.getResult());
         return {};
     }
     error(ctx, "Semantic problem with the classical declaration statement");

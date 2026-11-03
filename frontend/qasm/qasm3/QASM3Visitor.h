@@ -81,6 +81,9 @@ public:
     visitBarrierStatement(qasm3Parser::BarrierStatementContext* ctx) override;
 
 private:
+    mlir::FailureOr<unsigned>
+    resolveRegisterSize(qasm3Parser::DesignatorContext* designator);
+
     // A null destination discards the measurement result.
     mlir::LogicalResult emitMeasurement(
         qasm3Parser::MeasureExpressionContext &measurement,
