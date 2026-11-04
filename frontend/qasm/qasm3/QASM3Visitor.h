@@ -13,6 +13,7 @@
 #include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
 
 #include <any>
+#include <cstdint>
 #include <llvm/ADT/StringRef.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
@@ -81,6 +82,27 @@ public:
     visitBarrierStatement(qasm3Parser::BarrierStatementContext* ctx) override;
 
 private:
+    struct RegisterSlice {
+        enum class Kind { WholeRegister, Index, Range };
+
+        Kind kind;
+        unsigned offset;
+        unsigned count;
+        // A signed stride can represent descending ranges as well.
+        int64_t stride;
+
+        unsigned getIndex(unsigned position) const;
+    };
+
+    // Resolves register operands to an offset, element count, and stride.
+    // The kind preserves the distinction between q and q[0] for scalar
+    // registers. Explicit ranges remain unsupported until range validation is
+    // implemented.
+    mlir::FailureOr<RegisterSlice> resolveRegisterSlice(
+        qasm3Parser::IndexedIdentifierContext* operand,
+        unsigned registerSize,
+        llvm::StringRef indexKind);
+
     mlir::FailureOr<unsigned>
     resolveRegisterSize(qasm3Parser::DesignatorContext* designator);
 

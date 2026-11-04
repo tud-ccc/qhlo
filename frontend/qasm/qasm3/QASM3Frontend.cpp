@@ -80,7 +80,7 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM3(
 
     builder.setInsertionPointToEnd(&mainCircuit.getBody().front());
     for (const auto &entry : scope.getQRegs()) {
-        for (const auto &interval : entry.getValue().intervals.intervals()) {
+        for (const auto &interval : entry.getValue().getIntervals()) {
             mlir::quantum::DeallocateOp::create(
                 builder,
                 moduleLoc,

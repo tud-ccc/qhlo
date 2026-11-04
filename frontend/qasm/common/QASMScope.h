@@ -18,6 +18,25 @@ class QASMScope {
 public:
     struct QuantumRegister {
         unsigned size;
+
+        // Returns a null value when the register has been split.
+        mlir::Value getWholeRegisterValue() const;
+
+        // The indexed qubit must already have been materialized.
+        mlir::Value getQubitValue(unsigned index) const;
+        void updateQubit(unsigned index, mlir::Value value);
+
+        // Replaces the value of an existing interval without changing its
+        // range.
+        void updateInterval(unsigned start, mlir::Value value);
+
+        // Replaces all intervals with one value covering the entire register.
+        void updateWholeRegister(mlir::Value value);
+
+        auto getIntervals() const { return intervals.intervals(); }
+
+    private:
+        friend class QASMScope;
         IntervalMap intervals;
     };
 

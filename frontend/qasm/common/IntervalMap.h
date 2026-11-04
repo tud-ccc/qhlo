@@ -37,6 +37,14 @@ public:
         llvm_unreachable("qubit index is outside the interval partition");
     }
 
+    const QubitInterval &lookup(unsigned index) const
+    {
+        auto it = intervals_.upper_bound(index);
+        if (it != intervals_.begin() && (--it)->second.contains(index))
+            return it->second;
+        llvm_unreachable("qubit index is outside the interval partition");
+    }
+
     auto intervals() const
     {
         return llvm::map_range(

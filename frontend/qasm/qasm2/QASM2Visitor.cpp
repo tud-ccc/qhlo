@@ -149,7 +149,7 @@ QASM2Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
     returnValues.reserve(gate.qubits.size());
     for (const auto &name : gate.qubits)
         returnValues.push_back(
-            gateScope.lookupQReg(name)->intervals.lookup(0).value);
+            gateScope.lookupQReg(name)->getWholeRegisterValue());
     mlir::quantum::ReturnOp::create(gateBodyVisitor.builder, loc, returnValues);
 
     return mlir::success();
@@ -347,12 +347,10 @@ void writeQuantumResult(
 {
     for (auto [operand, result] : llvm::zip_equal(operands, results)) {
         assert(operand.reg);
-        if (operand.index) {
-            auto &interval = operand.reg->intervals.lookup(*operand.index);
-            interval.value = result;
-        } else {
-            operand.reg->intervals.set(0, operand.reg->size, result);
-        }
+        if (operand.index)
+            operand.reg->updateQubit(*operand.index, result);
+        else
+            operand.reg->updateWholeRegister(result);
     }
 }
 
@@ -379,15 +377,15 @@ QASM2Visitor::resolveQuantumOperand(qasm2Parser::GateOperandContext* ctx)
     };
 
     if (!indexed->designator()) {
-        auto &interval = reg->intervals.lookup(0);
-        if (interval.size() != reg->size) {
+        auto value = reg->getWholeRegisterValue();
+        if (!value) {
             error(
                 ctx,
                 "whole-register operands after qubit splitting are "
                 "unsupported");
             return std::nullopt;
         }
-        operand.value = interval.value;
+        operand.value = value;
         return operand;
     }
 
@@ -791,7 +789,7 @@ std::any QASM2Visitor::visitMeasureArrowAssignmentStatement(
             measurementType,
             qubit.getType(),
             qubit);
-        qreg->intervals.lookup(index).value = measurement.getResult();
+        qreg->updateQubit(index, measurement.getResult());
         auto result = mlir::qpu::ToBitsOp::create(
             builder,
             loc,
@@ -864,7 +862,7 @@ QASM2Visitor::visitBarrierStatement(qasm2Parser::BarrierStatementContext* ctx)
     // only once so each qubit has a single input and output at the barrier.
     llvm::SmallVector<QuantumOperand> operands;
     for (const auto &request : requests) {
-        for (const auto &interval : request.reg->intervals.intervals()) {
+        for (const auto &interval : request.reg->getIntervals()) {
             if (request.index && interval.start != *request.index) continue;
             if (llvm::any_of(operands, [&](const QuantumOperand &existing) {
                     return existing.reg == request.reg
@@ -883,7 +881,9 @@ QASM2Visitor::visitBarrierStatement(qasm2Parser::BarrierStatementContext* ctx)
     }
     auto barrier =
         mlir::quantum::BarrierOp::create(builder, loc, types, values);
-    writeQuantumResult(operands, barrier->getResults());
+    for (auto [operand, result] :
+         llvm::zip_equal(operands, barrier->getResults()))
+        operand.reg->updateInterval(*operand.index, result);
     return {};
 }
 
@@ -975,7 +975,8 @@ std::any QASM2Visitor::visitIfStatement(qasm2Parser::IfStatementContext* ctx)
     llvm::SmallVector<mlir::Value> originalValues;
     for (const auto &qubit : qubits)
         originalValues.push_back(
-            qubit.reg->intervals.lookup(qubit.index.value_or(0)).value);
+            qubit.index ? qubit.reg->getQubitValue(*qubit.index)
+                        : qubit.reg->getWholeRegisterValue());
     if (destination) originalValues.push_back(destination->value);
 
     auto ifOp = mlir::scf::IfOp::create(
@@ -989,7 +990,8 @@ std::any QASM2Visitor::visitIfStatement(qasm2Parser::IfStatementContext* ctx)
             llvm::SmallVector<mlir::Value> updatedValues;
             for (const auto &qubit : qubits)
                 updatedValues.push_back(
-                    qubit.reg->intervals.lookup(qubit.index.value_or(0)).value);
+                    qubit.index ? qubit.reg->getQubitValue(*qubit.index)
+                                : qubit.reg->getWholeRegisterValue());
             if (destination) updatedValues.push_back(destination->value);
             mlir::scf::YieldOp::create(bodyBuilder, loc, updatedValues);
         },

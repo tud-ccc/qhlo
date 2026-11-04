@@ -6,8 +6,57 @@
 #include "QASMScope.h"
 
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumOps.h"
+#include "quantum-mlir/Dialect/Quantum/IR/QuantumTypes.h"
+
+#include <cassert>
 
 namespace quantum::frontend {
+
+mlir::Value QASMScope::QuantumRegister::getWholeRegisterValue() const
+{
+    const auto &interval = intervals.lookup(0);
+    return interval.size() == size ? interval.value : mlir::Value{};
+}
+
+mlir::Value QASMScope::QuantumRegister::getQubitValue(unsigned index) const
+{
+    assert(index < size && "qubit index is outside the register");
+    const auto &interval = intervals.lookup(index);
+    assert(interval.size() == 1 && "qubit must be materialized before access");
+    return interval.value;
+}
+
+void QASMScope::QuantumRegister::updateInterval(
+    unsigned start,
+    mlir::Value value)
+{
+    assert(start < size && "interval start is outside the register");
+    auto &interval = intervals.lookup(start);
+    assert(interval.start == start && "expected the start of an interval");
+    assert(
+        value && value.getType() == interval.value.getType()
+        && "replacement must preserve the interval's qubit type");
+    interval.value = value;
+}
+
+void QASMScope::QuantumRegister::updateQubit(unsigned index, mlir::Value value)
+{
+    assert(index < size && "qubit index is outside the register");
+    assert(
+        intervals.lookup(index).size() == 1
+        && "qubit must be materialized before update");
+    updateInterval(index, value);
+}
+
+void QASMScope::QuantumRegister::updateWholeRegister(mlir::Value value)
+{
+    assert(
+        value
+        && value.getType()
+               == mlir::quantum::QubitType::get(value.getContext(), size)
+        && "replacement must match the register's qubit type");
+    intervals.set(0, size, value);
+}
 
 QASMScope::QuantumRegister* QASMScope::lookupQReg(llvm::StringRef name)
 {
@@ -39,7 +88,7 @@ QASMScope::QuantumRegister &QASMScope::declareQReg(
 {
     auto &reg = qregs_[name];
     reg.size = size;
-    reg.intervals.set(0, size, initialValue);
+    reg.updateWholeRegister(initialValue);
     return reg;
 }
 
