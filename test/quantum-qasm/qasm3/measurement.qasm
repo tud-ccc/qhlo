@@ -14,16 +14,15 @@ reset q;
 // CHECK: %[[Q:.*]]:2 = "quantum.split"
 // CHECK: %[[INDEXED:.*]], %[[INDEXEDQ:.*]] = "quantum.measure"(%[[Q]]#1)
 // CHECK: %[[BIT:.*]] = "qpu.to_bits"(%[[INDEXED]])
-// CHECK: %[[C0:.*]] = tensor.insert_slice %[[BIT]] into %[[BITS]][0] [1] [1]
-// CHECK: %[[WHOLE0:.*]], %[[WHOLE0Q:.*]] = "quantum.measure"(%[[Q]]#0)
-// CHECK: %[[BIT0:.*]] = "qpu.to_bits"(%[[WHOLE0]])
-// CHECK: %[[C1:.*]] = tensor.insert_slice %[[BIT0]] into %[[C0]][0] [1] [1]
-// CHECK: %[[WHOLE1:.*]], %[[WHOLE1Q:.*]] = "quantum.measure"(%[[INDEXEDQ]])
-// CHECK: %[[BIT1:.*]] = "qpu.to_bits"(%[[WHOLE1]])
-// CHECK: tensor.insert_slice %[[BIT1]] into %[[C1]][1] [1] [1]
-// CHECK: %[[DISCARD:.*]], %[[DISCARDQ:.*]] = "quantum.measure"(%[[WHOLE0Q]])
+// CHECK: tensor.insert_slice %[[BIT]] into %[[BITS]][0] [1] [1]
+// CHECK: %[[JOINED:.*]] = "quantum.merge"(%[[Q]]#0, %[[INDEXEDQ]])
+// CHECK: %[[WHOLE:.*]], %[[WHOLEQ:.*]] = "quantum.measure"(%[[JOINED]]) : (!quantum.qubit<2>)
+// CHECK: %[[WHOLEBITS:.*]] = "qpu.to_bits"(%[[WHOLE]])
+// CHECK: %[[SPLIT:.*]]:2 = "quantum.split"(%[[WHOLEQ]])
+// CHECK: %[[DISCARD:.*]], %[[DISCARDQ:.*]] = "quantum.measure"(%[[SPLIT]]#0)
 // CHECK-NOT: qpu.to_bits
-// CHECK: %[[DISCARD0:.*]], %[[DISCARD0Q:.*]] = "quantum.measure"(%[[DISCARDQ]])
-// CHECK: %[[DISCARD1:.*]], %[[DISCARD1Q:.*]] = "quantum.measure"(%[[WHOLE1Q]])
-// CHECK: "quantum.reset"(%[[DISCARD0Q]])
-// CHECK: "quantum.reset"(%[[DISCARD1Q]])
+// CHECK: %[[REJOINED:.*]] = "quantum.merge"(%[[DISCARDQ]], %[[SPLIT]]#1)
+// CHECK: %[[DISCARDALL:.*]], %[[DISCARDALLQ:.*]] = "quantum.measure"(%[[REJOINED]])
+// CHECK-NOT: qpu.to_bits
+// CHECK: "quantum.reset"(%[[DISCARDALLQ]]) : (!quantum.qubit<2>)
+// CHECK: "qpu.return"(%[[WHOLEBITS]])

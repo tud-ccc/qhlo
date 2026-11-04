@@ -7,7 +7,9 @@
 #define QUANTUM_MLIR_FRONTEND_QASM_COMMON_QASMSCOPE_H
 
 #include "IntervalMap.h"
+#include "RegisterSlice.h"
 
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringMap.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/Value.h>
@@ -18,6 +20,8 @@ class QASMScope {
 public:
     struct QuantumRegister {
         unsigned size;
+        // Scalar qubits broadcast differently from one-element registers.
+        bool isScalar = false;
 
         // Returns a null value when the register has been split.
         mlir::Value getWholeRegisterValue() const;
@@ -45,6 +49,62 @@ public:
         mlir::Value value;
     };
 
+    // Describes an assembled quantum operand and its original selection.
+    // After assembly, callers must restore its result before accessing the
+    // selected intervals again. Other operands must select disjoint qubits.
+    struct QuantumSelection {
+        mlir::Value value;
+        RegisterSlice slice;
+    };
+
+    void splitAt(
+        QuantumRegister &reg,
+        unsigned boundary,
+        mlir::OpBuilder &builder,
+        mlir::Location loc);
+
+    // Slice operations require a nonempty selection validated against reg.size.
+    // Introduces only selection boundaries, retaining existing partitions.
+    void refineSlice(
+        QuantumRegister &reg,
+        const RegisterSlice &slice,
+        mlir::OpBuilder &builder,
+        mlir::Location loc);
+
+    // Call after refining every operand; returned partitions follow selection
+    // order and contain only current SSA values.
+    llvm::SmallVector<QubitInterval> materializePartitions(
+        const QuantumRegister &reg,
+        const RegisterSlice &slice) const;
+
+    // Refine all disjoint operands before assembling any of their values.
+    QuantumSelection materializeRegister(
+        QuantumRegister &reg,
+        const RegisterSlice &slice,
+        mlir::OpBuilder &builder,
+        mlir::Location loc);
+
+    void updateRegister(
+        QuantumRegister &reg,
+        const QuantumSelection &selection,
+        mlir::Value result,
+        mlir::OpBuilder &builder,
+        mlir::Location loc);
+
+    // Classical selections require an initialized rank-one register tensor.
+    mlir::Value materializeRegister(
+        const ClassicalRegister &reg,
+        const RegisterSlice &slice,
+        mlir::OpBuilder &builder,
+        mlir::Location loc);
+
+    void updateRegister(
+        ClassicalRegister &reg,
+        const RegisterSlice &slice,
+        mlir::Value result,
+        mlir::OpBuilder &builder,
+        mlir::Location loc);
+
     QuantumRegister* lookupQReg(llvm::StringRef name);
     ClassicalRegister* lookupCReg(llvm::StringRef name);
 
@@ -57,8 +117,11 @@ public:
 
     // Declarations return null on a name collision with either register kind
     // and leave the existing register unchanged.
-    [[nodiscard]] QuantumRegister*
-    declareQReg(llvm::StringRef name, unsigned size, mlir::Value initialValue);
+    [[nodiscard]] QuantumRegister* declareQReg(
+        llvm::StringRef name,
+        unsigned size,
+        mlir::Value initialValue,
+        bool isScalar = false);
 
     [[nodiscard]] ClassicalRegister*
     declareCReg(llvm::StringRef name, unsigned size, mlir::Value initialValue);

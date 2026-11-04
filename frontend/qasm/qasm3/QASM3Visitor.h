@@ -13,6 +13,7 @@
 #include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
 
 #include <any>
+#include <cstddef>
 #include <cstdint>
 #include <llvm/ADT/StringRef.h>
 #include <mlir/IR/Builders.h>
@@ -82,25 +83,35 @@ public:
     visitBarrierStatement(qasm3Parser::BarrierStatementContext* ctx) override;
 
 private:
-    struct RegisterSlice {
+    struct RegisterSelection {
         enum class Kind { WholeRegister, Index, Range };
-
         Kind kind;
-        unsigned offset;
-        unsigned count;
-        // A signed stride can represent descending ranges as well.
-        int64_t stride;
-
-        unsigned getIndex(unsigned position) const;
+        RegisterSlice slice;
     };
 
-    // Resolves register operands to an offset, element count, and stride.
-    // The kind preserves the distinction between q and q[0] for scalar
-    // registers. Explicit ranges remain unsupported until range validation is
-    // implemented.
-    mlir::FailureOr<RegisterSlice> resolveRegisterSlice(
+    struct ResolvedQuantumOperand {
+        QASMScope::QuantumRegister* reg;
+        RegisterSlice slice;
+        bool isScalar;
+    };
+
+    mlir::FailureOr<int64_t> evaluateBinaryInteger(
+        qasm3Parser::ExpressionContext* expression,
+        size_t op,
+        qasm3Parser::ExpressionContext* lhs,
+        qasm3Parser::ExpressionContext* rhs);
+
+    mlir::FailureOr<int64_t>
+    evaluateConstantInteger(qasm3Parser::ExpressionContext* expression);
+
+    mlir::FailureOr<RegisterSelection> resolveRegisterSelection(
         qasm3Parser::IndexedIdentifierContext* operand,
         unsigned registerSize,
+        llvm::StringRef indexKind);
+
+    // Resolves the selection without capturing values or refining partitions.
+    mlir::FailureOr<ResolvedQuantumOperand> resolveQuantumOperand(
+        qasm3Parser::GateOperandContext &operand,
         llvm::StringRef indexKind);
 
     mlir::FailureOr<unsigned>

@@ -17,5 +17,6 @@ target_link_libraries(QuantumQASMCommon
         QuantumIR
         MLIRIR
         MLIRSupport
+        MLIRTensorDialect
         LLVMSupport
 )

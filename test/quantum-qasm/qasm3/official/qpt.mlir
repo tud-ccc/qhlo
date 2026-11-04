@@ -26,9 +26,8 @@
 // CHECK-NEXT: %[[POST:.*]] = "quantum.call"(%[[BARRIER2]]) <{callee = @post}> : (!quantum.qubit<1>) -> !quantum.qubit<1>
 // CHECK: %[[MEAS:.*]], %[[MEASURED_Q:.*]] = "quantum.measure"(%[[POST]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
 // CHECK-NEXT: %[[BITS:.*]] = "qpu.to_bits"(%[[MEAS]]) : (!quantum.measurement<1>) -> tensor<1xi1>
-// CHECK-NEXT: %[[ASSIGNED:.*]] = tensor.insert_slice %[[BITS]] into %[[C]][0] [1] [1] : tensor<1xi1> into tensor<1xi1>
 // CHECK-NEXT: "quantum.deallocate"(%[[MEASURED_Q]]) : (!quantum.qubit<1>) -> ()
-// CHECK-NEXT: "qpu.return"(%[[ASSIGNED]]) : (tensor<1xi1>) -> ()
+// CHECK-NEXT: "qpu.return"(%[[BITS]]) : (tensor<1xi1>) -> ()
 // CHECK-NEXT: }) : () -> ()
 // CHECK-NEXT: }
 // CHECK-NEXT: func.func @qasm_main() -> tensor<1xi1> {

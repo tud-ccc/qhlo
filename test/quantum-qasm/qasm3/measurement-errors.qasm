@@ -11,7 +11,7 @@
 // RUN: not quantum-qasm %t/quantum-call.qasm 2>&1 | FileCheck %s --check-prefix=CALL
 
 // INDEX: error: expected a constant measurement index within the register
-// RANGE: error: expected a single constant measurement index
+// RANGE: error: range step must not be zero
 // SIZE: error: measurement source and destination sizes must match
 // HARDWARE: error: hardware qubit operands are not supported
 
@@ -31,7 +31,7 @@ measure q -> c[2];
 OPENQASM 3.0;
 qubit[2] q;
 bit[2] c;
-measure q[0:1] -> c;
+measure q[0:0:1] -> c;
 
 //--- size.qasm
 OPENQASM 3.0;

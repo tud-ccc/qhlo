@@ -6,6 +6,7 @@
 #ifndef QUANTUM_MLIR_FRONTEND_QASM_COMMON_INTERVALMAP_H
 #define QUANTUM_MLIR_FRONTEND_QASM_COMMON_INTERVALMAP_H
 
+#include <cassert>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Support/ErrorHandling.h>
@@ -72,6 +73,23 @@ public:
     void set(unsigned start, unsigned end, mlir::Value value)
     {
         intervals_.clear();
+        intervals_.emplace(start, QubitInterval{start, end, value});
+    }
+
+    // Coalesces complete adjacent intervals, preserving the rest of the map.
+    void coalesce(unsigned start, unsigned end, mlir::Value value)
+    {
+        auto first = intervals_.find(start);
+        assert(first != intervals_.end() && start < end);
+        auto last = first;
+        unsigned coveredEnd = start;
+        while (last != intervals_.end() && last->first < end) {
+            assert(last->first == coveredEnd && last->second.end <= end);
+            coveredEnd = last->second.end;
+            ++last;
+        }
+        assert(coveredEnd == end && "range must cover complete intervals");
+        intervals_.erase(first, last);
         intervals_.emplace(start, QubitInterval{start, end, value});
     }
 

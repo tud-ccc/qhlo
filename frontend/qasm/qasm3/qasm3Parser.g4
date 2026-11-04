@@ -165,7 +165,7 @@ aliasExpression: expression (DOUBLE_PLUS expression)*;
 declarationExpression: arrayLiteral | expression | measureExpression | quantumCallExpression;
 measureExpression: MEASURE gateOperand;
 quantumCallExpression: Identifier (LPAREN expressionList? RPAREN)? gateOperandList;
-rangeExpression: expression? COLON expression? (COLON expression)?;
+rangeExpression: start=expression? COLON stepOrStop=expression? (COLON stop=expression)?;
 setExpression: LBRACE expression (COMMA expression)* COMMA? RBRACE;
 arrayLiteral: LBRACE ((expression | arrayLiteral) (COMMA (expression | arrayLiteral))* COMMA?)? RBRACE;
 
