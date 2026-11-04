@@ -907,7 +907,7 @@ QASM3Visitor::visitResetStatement(qasm3Parser::ResetStatementContext* ctx)
     const auto slice = operand->slice.inAscendingOrder();
     const auto loc = getLocation(ctx);
     scope.refineSlice(*qreg, slice, builder, loc);
-    for (const auto &interval : scope.materializePartitions(*qreg, slice)) {
+    for (const auto &interval : scope.collectPartitions(*qreg, slice)) {
         auto reset = mlir::quantum::ResetOp::create(
             builder,
             loc,
@@ -947,7 +947,7 @@ QASM3Visitor::visitBarrierStatement(qasm3Parser::BarrierStatementContext* ctx)
     llvm::SmallVector<mlir::Type> types;
     for (const auto &request : requests) {
         for (const auto &interval :
-             scope.materializePartitions(*request.reg, request.slice)) {
+             scope.collectPartitions(*request.reg, request.slice)) {
             if (llvm::any_of(operands, [&](const QuantumOperand &existing) {
                     return existing.reg == request.reg
                            && existing.index == interval.start;

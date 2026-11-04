@@ -219,7 +219,7 @@ void QASMScope::refineSlice(
         materializeQubit(reg, slice.getIndex(i), builder, loc);
 }
 
-llvm::SmallVector<QubitInterval> QASMScope::materializePartitions(
+llvm::SmallVector<QubitInterval> QASMScope::collectPartitions(
     const QuantumRegister &reg,
     const RegisterSlice &slice) const
 {
@@ -254,7 +254,7 @@ QASMScope::QuantumSelection QASMScope::materializeRegister(
     mlir::Location loc)
 {
     refineSlice(reg, slice, builder, loc);
-    auto partitions = materializePartitions(reg, slice);
+    auto partitions = collectPartitions(reg, slice);
     if (partitions.size() == 1) return {partitions.front().value, slice};
     llvm::SmallVector<mlir::Value> values;
     for (const auto &partition : partitions) values.push_back(partition.value);

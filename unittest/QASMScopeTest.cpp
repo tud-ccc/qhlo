@@ -54,7 +54,7 @@ TEST_CASE("Contiguous selections preserve and then coalesce partitions")
     f.scope.splitAt(reg, 4, f.builder, f.loc);
     quantum::frontend::RegisterSlice slice{2, 4, 1};
     f.scope.refineSlice(reg, slice, f.builder, f.loc);
-    auto partitions = f.scope.materializePartitions(reg, slice);
+    auto partitions = f.scope.collectPartitions(reg, slice);
     REQUIRE(partitions.size() == 2);
     CHECK(partitions[0].start == 2);
     CHECK(partitions[0].end == 4);
@@ -79,7 +79,7 @@ TEST_CASE("Contiguous selections preserve and then coalesce partitions")
         selection.value.getType(),
         selection.value);
     f.scope.updateRegister(reg, selection, reset.getResult(), f.builder, f.loc);
-    auto restored = f.scope.materializePartitions(reg, slice);
+    auto restored = f.scope.collectPartitions(reg, slice);
     REQUIRE(restored.size() == 1);
     CHECK(restored[0].start == 2);
     CHECK(restored[0].end == 6);
@@ -106,7 +106,7 @@ TEST_CASE("Descending selections restore results to original qubit positions")
     auto &reg = f.allocate(7);
     quantum::frontend::RegisterSlice slice{5, 3, -2};
     f.scope.refineSlice(reg, slice, f.builder, f.loc);
-    const auto partitions = f.scope.materializePartitions(reg, slice);
+    const auto partitions = f.scope.collectPartitions(reg, slice);
     REQUIRE(partitions.size() == 3);
     auto selection = f.scope.materializeRegister(reg, slice, f.builder, f.loc);
     auto merged = selection.value.getDefiningOp<mlir::quantum::MergeOp>();

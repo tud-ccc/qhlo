@@ -73,7 +73,7 @@ public:
 
     // Call after refining every operand; returned partitions follow selection
     // order and contain only current SSA values.
-    llvm::SmallVector<QubitInterval> materializePartitions(
+    llvm::SmallVector<QubitInterval> collectPartitions(
         const QuantumRegister &reg,
         const RegisterSlice &slice) const;
 
