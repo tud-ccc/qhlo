@@ -8,8 +8,10 @@
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/InitLLVM.h>
 #include <llvm/Support/MemoryBuffer.h>
+#include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/raw_ostream.h>
 #include <mlir/IR/BuiltinOps.h>
+#include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/Support/FileUtilities.h>
 #include <mlir/Support/ToolUtilities.h>
@@ -27,15 +29,32 @@ llvm::cl::opt<bool> splitInputFile(
     llvm::cl::desc("Split the input file into independent chunks"),
     llvm::cl::init(false));
 
+llvm::cl::opt<bool> verifyDiagnostics(
+    "verify-diagnostics",
+    llvm::cl::desc("Verify emitted diagnostics against expected-* comments"),
+    llvm::cl::init(false));
+
 mlir::LogicalResult processBuffer(
     std::unique_ptr<llvm::MemoryBuffer> input,
     llvm::raw_ostream &output)
 {
     mlir::MLIRContext context;
+    llvm::SourceMgr sourceMgr;
+    sourceMgr.AddNewSourceBuffer(std::move(input), llvm::SMLoc());
+    const auto* buffer = sourceMgr.getMemoryBuffer(sourceMgr.getMainFileID());
+    std::unique_ptr<mlir::SourceMgrDiagnosticVerifierHandler> verifier;
+    if (verifyDiagnostics)
+        verifier = std::make_unique<mlir::SourceMgrDiagnosticVerifierHandler>(
+            sourceMgr,
+            &context);
+
+    // Split chunks use their own buffer names and line numbers so expectations
+    // are matched against the same source that the QASM parser sees.
     auto module = quantum::frontend::parseQASM(
-        input->getBuffer(),
-        inputFilename,
+        buffer->getBuffer(),
+        verifyDiagnostics ? buffer->getBufferIdentifier() : inputFilename,
         context);
+    if (verifier) return verifier->verify();
     if (!module) return mlir::failure();
 
     module->print(output);

@@ -1,50 +1,61 @@
-// RUN: split-file %s %t
-// RUN: not quantum-qasm %t/quantum.qasm 2>&1 | FileCheck %s
-// RUN: not quantum-qasm %t/classical.qasm 2>&1 | FileCheck %s
-// RUN: not quantum-qasm %t/quantum-classical.qasm 2>&1 | FileCheck %s
-// RUN: not quantum-qasm %t/classical-quantum.qasm 2>&1 | FileCheck %s
-// RUN: not quantum-qasm %t/gate-parameters.qasm 2>&1 | FileCheck %s
-// RUN: not quantum-qasm %t/gate-qubits.qasm 2>&1 | FileCheck %s
-// RUN: not quantum-qasm %t/gate-parameter-qubit.qasm 2>&1 | FileCheck %s
+// RUN: quantum-qasm %s -split-input-file -verify-diagnostics
+// RUN: not quantum-qasm %s -split-input-file 2>&1 | FileCheck %s --check-prefix=NO-IR
 
-// CHECK: error: redefinition of 'q'
-// CHECK-NOT: error:
-// CHECK-NOT: qpu.module
+// NO-IR-NOT: qpu.module
 
-//--- quantum.qasm
+// Quantum.
 OPENQASM 2.0;
 qreg q[2];
+// expected-error @+1 {{redefinition of 'q'}}
 qreg q[2];
 
-//--- classical.qasm
+// -----
+
+// Classical.
 OPENQASM 2.0;
 creg q[2];
+// expected-error @+1 {{redefinition of 'q'}}
 creg q[2];
 
-//--- quantum-classical.qasm
+// -----
+
+// Quantum classical.
 OPENQASM 2.0;
 qreg q[2];
+// expected-error @+1 {{redefinition of 'q'}}
 creg q[2];
 
-//--- classical-quantum.qasm
+// -----
+
+// Classical quantum.
 OPENQASM 2.0;
 creg q[2];
+// expected-error @+1 {{redefinition of 'q'}}
 qreg q[2];
 
-//--- gate-parameters.qasm
+// -----
+
+// Gate parameters.
 OPENQASM 2.0;
 gate g(q, q) a {}
 qreg q[2];
+// expected-error @+1 {{redefinition of 'q'}}
 g(1, 2) q[0];
 
-//--- gate-qubits.qasm
+// -----
+
+// Gate qubits.
 OPENQASM 2.0;
 gate g q, q {}
 qreg q[2];
+// expected-error @+1 {{redefinition of 'q'}}
 g q[0], q[1];
 
-//--- gate-parameter-qubit.qasm
+// -----
+
+// Gate parameter qubit.
 OPENQASM 2.0;
 gate g(q) q {}
 qreg q[2];
+// expected-error @+1 {{redefinition of 'q'}}
 g(1) q[0];

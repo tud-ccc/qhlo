@@ -1,222 +1,144 @@
-// RUN: split-file %s %t
-// RUN: not quantum-qasm %t/zero-step.qasm 2>&1 | FileCheck %s --check-prefix=ZERO-STEP
-// RUN: not quantum-qasm %t/empty.qasm 2>&1 | FileCheck %s --check-prefix=EMPTY
-// RUN: not quantum-qasm %t/endpoint.qasm 2>&1 | FileCheck %s --check-prefix=ENDPOINT
-// RUN: not quantum-qasm %t/negative-endpoint.qasm 2>&1 | FileCheck %s --check-prefix=NEGATIVE-ENDPOINT
-// RUN: not quantum-qasm %t/float-step.qasm 2>&1 | FileCheck %s --check-prefix=FLOAT-STEP
-// RUN: not quantum-qasm %t/runtime-step.qasm 2>&1 | FileCheck %s --check-prefix=RUNTIME-STEP
-// RUN: not quantum-qasm %t/unknown.qasm 2>&1 | FileCheck %s --check-prefix=UNKNOWN
-// RUN: not quantum-qasm %t/multiple.qasm 2>&1 | FileCheck %s --check-prefix=MULTIPLE
-// RUN: not quantum-qasm %t/set.qasm 2>&1 | FileCheck %s --check-prefix=SET
-// RUN: not quantum-qasm %t/missing-step.qasm 2>&1 | FileCheck %s --check-prefix=MISSING-STEP
-// RUN: not quantum-qasm %t/broadcast-size.qasm 2>&1 | FileCheck %s --check-prefix=BROADCAST-SIZE
-// RUN: not quantum-qasm %t/one-element-slice.qasm 2>&1 | FileCheck %s --check-prefix=ONE-ELEMENT-SLICE
-// RUN: not quantum-qasm %t/one-element-register.qasm 2>&1 | FileCheck %s --check-prefix=ONE-ELEMENT-REGISTER
-// RUN: not quantum-qasm %t/alias.qasm 2>&1 | FileCheck %s --check-prefix=ALIAS
-// RUN: not quantum-qasm %t/measurement-size.qasm 2>&1 | FileCheck %s --check-prefix=MEASUREMENT-SIZE
-// RUN: not quantum-qasm %t/overflow.qasm 2>&1 | FileCheck %s --check-prefix=OVERFLOW
-// RUN: not quantum-qasm %t/division-zero.qasm 2>&1 | FileCheck %s --check-prefix=DIVISION-ZERO
+// RUN: quantum-qasm %s -split-input-file -verify-diagnostics
+// RUN: not quantum-qasm %s -split-input-file 2>&1 | FileCheck %s --check-prefix=NO-IR
 
-// ZERO-STEP: error: range step must not be zero
-// ZERO-STEP-NOT: error:
-// ZERO-STEP-NOT: qpu.module
+// NO-IR-NOT: qpu.module
 
-//--- zero-step.qasm
+// Zero step.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{range step must not be zero}}
 h q[0:0:3];
 
-// EMPTY: error: register selection must not be empty
-// EMPTY-NOT: error:
-// EMPTY-NOT: qpu.module
+// -----
 
-//--- empty.qasm
+// Empty.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{register selection must not be empty}}
 reset q[3:0];
 
-// ENDPOINT: error: range endpoints must be within the register
-// ENDPOINT-NOT: error:
-// ENDPOINT-NOT: qpu.module
+// -----
 
-//--- endpoint.qasm
+// Endpoint.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{range endpoints must be within the register}}
 barrier q[0:4];
 
-// NEGATIVE-ENDPOINT: error: range endpoints must be within the register
-// NEGATIVE-ENDPOINT-NOT: error:
-// NEGATIVE-ENDPOINT-NOT: qpu.module
+// -----
 
-//--- negative-endpoint.qasm
+// Negative endpoint.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{range endpoints must be within the register}}
 reset q[-5:-1];
 
-// FLOAT-STEP: error: expected a constant integer expression
-// FLOAT-STEP-NOT: error:
-// FLOAT-STEP-NOT: qpu.module
+// -----
 
-//--- float-step.qasm
+// Float step.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{expected a constant integer expression}}
 h q[0:1.5:3];
 
-// RUNTIME-STEP: error: expected a constant integer expression
-// RUNTIME-STEP-NOT: error:
-// RUNTIME-STEP-NOT: qpu.module
+// -----
 
-//--- runtime-step.qasm
+// Runtime step.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
 bit[4] c;
+// expected-error @+1 {{expected a constant integer expression}}
 h q[0:c:3];
 
-// UNKNOWN: error: unknown parameter 'missing'
-// UNKNOWN-NOT: error:
-// UNKNOWN-NOT: qpu.module
+// -----
 
-//--- unknown.qasm
+// Unknown.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{unknown parameter 'missing'}}
 h q[missing:3];
 
-// MULTIPLE: error: expected a single constant qubit index or range
-// MULTIPLE-NOT: error:
-// MULTIPLE-NOT: qpu.module
+// -----
 
-//--- multiple.qasm
+// Multiple.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{expected a single constant qubit index or range}}
 barrier q[0:1,2:3];
 
-// SET: error: expected a single constant qubit index or range
-// SET-NOT: error:
-// SET-NOT: qpu.module
+// -----
 
-//--- set.qasm
+// Set.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{expected a single constant qubit index or range}}
 reset q[{0,2}];
 
-// MISSING-STEP: error: expected a constant range step
-// MISSING-STEP-NOT: error:
-// MISSING-STEP-NOT: qpu.module
+// -----
 
-//--- missing-step.qasm
+// Missing step.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{expected a constant range step}}
 reset q[0::3];
 
-// BROADCAST-SIZE: error: broadcast register operands must have equal lengths
-// BROADCAST-SIZE-NOT: error:
-// BROADCAST-SIZE-NOT: qpu.module
+// -----
 
-//--- broadcast-size.qasm
+// Broadcast size.
 OPENQASM 3.0;
 qubit[4] q;
 qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{broadcast register operands must have equal lengths}}
 cx q[0:1], r[0:2];
 
-// ONE-ELEMENT-SLICE: error: broadcast register operands must have equal lengths
-// ONE-ELEMENT-SLICE-NOT: error:
-// ONE-ELEMENT-SLICE-NOT: qpu.module
+// -----
 
-//--- one-element-slice.qasm
+// One element slice.
 OPENQASM 3.0;
 qubit[4] q;
 qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{broadcast register operands must have equal lengths}}
 cx q[0:0], r[0:2];
 
-// ONE-ELEMENT-REGISTER: error: broadcast register operands must have equal lengths
-// ONE-ELEMENT-REGISTER-NOT: error:
-// ONE-ELEMENT-REGISTER-NOT: qpu.module
+// -----
 
-//--- one-element-register.qasm
+// One element register.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
 qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{broadcast register operands must have equal lengths}}
 cx single, q[0:2];
 
-// ALIAS: error: gate operands must refer to distinct qubits
-// ALIAS-NOT: error:
-// ALIAS-NOT: qpu.module
+// -----
 
-//--- alias.qasm
+// Alias.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{gate operands must refer to distinct qubits}}
 cx q[0:2], q[0:2];
 
-// MEASUREMENT-SIZE: error: measurement source and destination sizes must match
-// MEASUREMENT-SIZE-NOT: error:
-// MEASUREMENT-SIZE-NOT: qpu.module
+// -----
 
-//--- measurement-size.qasm
+// Measurement size.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
 bit[4] c;
+// expected-error @+1 {{measurement source and destination sizes must match}}
 measure q[0:2] -> c[0:1];
 
-// OVERFLOW: error: constant integer expression overflows int64
-// OVERFLOW-NOT: error:
-// OVERFLOW-NOT: qpu.module
+// -----
 
-//--- overflow.qasm
+// Overflow.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
-bit[4] c;
+// expected-error @+1 {{constant integer expression overflows int64}}
 h q[(9223372036854775807 + 1):3];
 
-// DIVISION-ZERO: error: division by zero in constant integer expression
-// DIVISION-ZERO-NOT: error:
-// DIVISION-ZERO-NOT: qpu.module
+// -----
 
-//--- division-zero.qasm
+// Division zero.
 OPENQASM 3.0;
 qubit[4] q;
-qubit[4] r;
-qubit[1] single;
 bit[4] c;
+// expected-error @+1 {{division by zero in constant integer expression}}
 measure q[(1 / 0):3] -> c;

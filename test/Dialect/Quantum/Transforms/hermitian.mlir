@@ -4,12 +4,12 @@
 func.func @triple_h_cancel() -> !quantum.qubit<1> {
   // CHECK-DAG: %[[Q1:.+]] = "quantum.alloc"() : () -> !quantum.qubit<1>
   %q1 = "quantum.alloc"() : () -> (!quantum.qubit<1>)
-  // CHECK-NOT "quantum.H"
+  // CHECK-NOT: "quantum.H"
   %q2 = "quantum.H" (%q1) : (!quantum.qubit<1>) -> (!quantum.qubit<1>)
-  // CHECK-NOT "quantum.H"
   %q3 = "quantum.H" (%q2) : (!quantum.qubit<1>) -> (!quantum.qubit<1>)
-  // CHECK-DAG: %[[Q4:.+]] = "quantum.H"(%[[Q1]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+  // CHECK: %[[Q4:.+]] = "quantum.H"(%[[Q1]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
   %q4 = "quantum.H" (%q3) : (!quantum.qubit<1>) -> (!quantum.qubit<1>)
+  // CHECK-NOT: "quantum.H"
   // CHECK: return %[[Q4]]
   return %q4 : !quantum.qubit<1>
 }
@@ -38,14 +38,15 @@ func.func @interleaved_gates_do_cancel() -> !quantum.qubit<1> {
   %q1 = "quantum.alloc"() : () -> (!quantum.qubit<1>)
   // CHECK-DAG: %[[Q2:.+]] = "quantum.alloc"() : () -> !quantum.qubit<1>
   %q2 = "quantum.alloc"() : () -> (!quantum.qubit<1>)
-  // CHECK-NOT "quantum.H"
+  // CHECK-NOT: "quantum.H"
   %q3 = "quantum.H" (%q1) : (!quantum.qubit<1>) -> (!quantum.qubit<1>)
-  // CHECK-DAG: %[[Q4:.+]] = "quantum.X"(%[[Q2]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+  // CHECK: %[[Q4:.+]] = "quantum.X"(%[[Q2]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
   %q4 = "quantum.X" (%q2) : (!quantum.qubit<1>) -> (!quantum.qubit<1>)
-  // CHECK-NOT "quantum.H"
+  // CHECK-NOT: "quantum.H"
   %q5 = "quantum.H" (%q3) : (!quantum.qubit<1>) -> (!quantum.qubit<1>)
-  // CHECK-DAG: "quantum.deallocate"(%[[Q4]]) : (!quantum.qubit<1>) -> ()
+  // CHECK: "quantum.deallocate"(%[[Q4]]) : (!quantum.qubit<1>) -> ()
   "quantum.deallocate" (%q4) : (!quantum.qubit<1>) -> ()
+  // CHECK-NOT: "quantum.H"
   // CHECK: return %[[Q1]] : !quantum.qubit<1>
   return %q5 : !quantum.qubit<1>
 }
@@ -94,12 +95,13 @@ func.func @single_x_no_cancel() -> !quantum.qubit<1> {
 func.func @triple_x_cancel() -> !quantum.qubit<1> {
   // CHECK-DAG: %[[Q1:.+]] = "quantum.alloc"() : () -> !quantum.qubit<1>
   %q1 = "quantum.alloc"() : () -> (!quantum.qubit<1>)
-  //CHECK-NOT "quantum.X"
+  // CHECK-NOT: "quantum.X"
   %q2 = "quantum.X" (%q1) : (!quantum.qubit<1>) -> (!quantum.qubit<1>)
-  //CHECK-NOT "quantum.X"
   %q3 = "quantum.X" (%q2) : (!quantum.qubit<1>) -> (!quantum.qubit<1>)
-  // CHECK-DAG: %[[Q4:.+]] = "quantum.X"(%[[Q1]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+  // CHECK: %[[Q4:.+]] = "quantum.X"(%[[Q1]]) : (!quantum.qubit<1>) -> !quantum.qubit<1>
   %q4 = "quantum.X" (%q3) : (!quantum.qubit<1>) -> (!quantum.qubit<1>)
+  // CHECK-NOT: "quantum.X"
+  // CHECK: return %[[Q4]] : !quantum.qubit<1>
   return %q4 : !quantum.qubit<1>
 }
 

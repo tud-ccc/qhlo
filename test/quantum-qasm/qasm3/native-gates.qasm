@@ -10,9 +10,9 @@ reset q;
 
 // CHECK: %[[SPLIT:.*]]:2 = "quantum.split"
 // CHECK: %[[H:.*]] = "quantum.H"(%[[SPLIT]]#0)
-// CHECK: %[[CX:.*]]:2 = "quantum.CNOT"(%[[H]], %[[SPLIT]]#1)
-// CHECK: %[[P:.*]] = "quantum.P"(%[[CX]]#1,
-// CHECK: %[[CP:.*]]:2 = "quantum.CU1"(%[[CX]]#0, %[[P]],
-// CHECK: %[[U:.*]] = "quantum.U3"(%[[CP]]#0,
+// CHECK: %[[CX_CONTROL:.*]], %[[CX_TARGET:.*]] = "quantum.CNOT"(%[[H]], %[[SPLIT]]#1)
+// CHECK: %[[P:.*]] = "quantum.P"(%[[CX_TARGET]],
+// CHECK: %[[CP_CONTROL:.*]], %[[CP_TARGET:.*]] = "quantum.CU1"(%[[CX_CONTROL]], %[[P]],
+// CHECK: %[[U:.*]] = "quantum.U3"(%[[CP_CONTROL]],
 // CHECK: "quantum.reset"(%[[U]])
-// CHECK: "quantum.reset"(%[[CP]]#1)
+// CHECK: "quantum.reset"(%[[CP_TARGET]])

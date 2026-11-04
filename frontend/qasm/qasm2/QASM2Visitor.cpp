@@ -403,10 +403,7 @@ QASM2Visitor::resolveQuantumOperand(qasm2Parser::GateOperandContext* ctx)
 
     auto parsedIndex =
         parseUnsigned(indexed->designator()->DecimalIntegerLiteral(), ctx);
-    if (!parsedIndex) {
-        error(ctx, "Could not validate operand index");
-        return std::nullopt;
-    }
+    if (!parsedIndex) return std::nullopt;
     const unsigned index = *parsedIndex;
     if (index >= reg->size) {
         error(
