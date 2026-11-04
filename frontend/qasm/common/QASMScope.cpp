@@ -109,7 +109,18 @@ mlir::Value QASMScope::materializeQubit(
     mlir::OpBuilder &builder,
     mlir::Location loc)
 {
+    assert(index < reg.size && "qubit index is outside the register");
     auto &interval = reg.intervals.lookup(index);
+    assert(
+        interval.contains(index) && interval.end <= reg.size
+        && "qubit interval must cover the index within the register bounds");
+    assert(
+        interval.value
+        && interval.value.getType()
+               == mlir::quantum::QubitType::get(
+                   builder.getContext(),
+                   interval.size())
+        && "interval value must match its width and the builder's context");
 
     // Reuse an already isolated qubit to avoid emitting a redundant split.
     if (interval.size() == 1) return interval.value;

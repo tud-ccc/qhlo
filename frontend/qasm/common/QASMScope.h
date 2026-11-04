@@ -73,7 +73,10 @@ public:
     /// @param loc Source location assigned to the emitted split operation.
     /// @return The single-qubit value at index, reusing an existing value when
     /// already isolated.
-    /// @pre index must be covered by an interval in reg.
+    /// @pre index must be less than reg.size.
+    /// @pre An interval within the register bounds must cover index.
+    /// @pre The interval must hold a non-null qubit value whose width matches
+    /// the interval size and whose context matches the builder's context.
     mlir::Value materializeQubit(
         QASMScope::QuantumRegister &reg,
         unsigned index,
