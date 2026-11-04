@@ -40,7 +40,14 @@ mlir::LogicalResult processBuffer(
 {
     mlir::MLIRContext context;
     llvm::SourceMgr sourceMgr;
-    sourceMgr.AddNewSourceBuffer(std::move(input), llvm::SMLoc());
+    // Each chunk has its own source manager and parser line numbers. Keep the
+    // physical filename so diagnostic matching and relative includes agree.
+    sourceMgr.AddNewSourceBuffer(
+        llvm::MemoryBuffer::getMemBuffer(
+            input->getBuffer(),
+            inputFilename,
+            /*RequiresNullTerminator=*/false),
+        llvm::SMLoc());
     const auto* buffer = sourceMgr.getMemoryBuffer(sourceMgr.getMainFileID());
     std::unique_ptr<mlir::SourceMgrDiagnosticVerifierHandler> verifier;
     if (verifyDiagnostics)
@@ -48,11 +55,9 @@ mlir::LogicalResult processBuffer(
             sourceMgr,
             &context);
 
-    // Split chunks use their own buffer names and line numbers so expectations
-    // are matched against the same source that the QASM parser sees.
     auto module = quantum::frontend::parseQASM(
         buffer->getBuffer(),
-        verifyDiagnostics ? buffer->getBufferIdentifier() : inputFilename,
+        inputFilename,
         context);
     if (verifier) return verifier->verify();
     if (!module) return mlir::failure();
