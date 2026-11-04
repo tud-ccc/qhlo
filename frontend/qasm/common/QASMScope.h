@@ -48,15 +48,19 @@ public:
     QuantumRegister* lookupQReg(llvm::StringRef name);
     ClassicalRegister* lookupCReg(llvm::StringRef name);
 
+    bool contains(llvm::StringRef name) const;
+
     const llvm::StringMap<QuantumRegister> &getQRegs() const { return qregs_; }
 
     const llvm::StringMap<ClassicalRegister> &getCRegs() const
     { return cregs_; }
 
-    QuantumRegister &
+    // Declarations return null on a name collision with either register kind
+    // and leave the existing register unchanged.
+    [[nodiscard]] QuantumRegister*
     declareQReg(llvm::StringRef name, unsigned size, mlir::Value initialValue);
 
-    ClassicalRegister &
+    [[nodiscard]] ClassicalRegister*
     declareCReg(llvm::StringRef name, unsigned size, mlir::Value initialValue);
 
     /// @brief Materializes a single qubit, splitting its register interval if

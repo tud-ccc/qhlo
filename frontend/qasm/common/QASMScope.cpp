@@ -70,26 +70,37 @@ QASMScope::ClassicalRegister* QASMScope::lookupCReg(llvm::StringRef name)
     return it == cregs_.end() ? nullptr : &it->second;
 }
 
-QASMScope::ClassicalRegister &QASMScope::declareCReg(
+bool QASMScope::contains(llvm::StringRef name) const
+{ return qregs_.contains(name) || cregs_.contains(name); }
+
+QASMScope::ClassicalRegister* QASMScope::declareCReg(
     llvm::StringRef name,
     unsigned size,
     mlir::Value initialValue)
 {
-    auto &reg = cregs_[name];
+    if (qregs_.contains(name)) return nullptr;
+    auto [it, inserted] = cregs_.try_emplace(name);
+    if (!inserted) return nullptr;
+
+    auto &reg = it->second;
     reg.size = size;
     reg.value = initialValue;
-    return reg;
+    return &reg;
 }
 
-QASMScope::QuantumRegister &QASMScope::declareQReg(
+QASMScope::QuantumRegister* QASMScope::declareQReg(
     llvm::StringRef name,
     unsigned size,
     mlir::Value initialValue)
 {
-    auto &reg = qregs_[name];
+    if (cregs_.contains(name)) return nullptr;
+    auto [it, inserted] = qregs_.try_emplace(name);
+    if (!inserted) return nullptr;
+
+    auto &reg = it->second;
     reg.size = size;
     reg.updateWholeRegister(initialValue);
-    return reg;
+    return &reg;
 }
 
 mlir::Value QASMScope::materializeQubit(

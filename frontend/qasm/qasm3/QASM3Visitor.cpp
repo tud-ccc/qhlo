@@ -123,13 +123,23 @@ QASM3Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
         gateBlock.addArgument(type, loc);
 
     QASMScope gateScope;
-    for (auto [index, name] : llvm::enumerate(gate.parameters))
-        gateScope.declareCReg(
-            name,
-            1,
-            gateBlock.getArgument(gate.qubits.size() + index));
-    for (auto [index, name] : llvm::enumerate(gate.qubits))
-        gateScope.declareQReg(name, 1, gateBlock.getArgument(index));
+    for (auto [index, name] : llvm::enumerate(gate.parameters)) {
+        if (!gateScope.declareCReg(
+                name,
+                1,
+                gateBlock.getArgument(gate.qubits.size() + index))) {
+            mlir::emitError(loc) << "redefinition of '" << name << "'";
+            hadError = true;
+            return mlir::failure();
+        }
+    }
+    for (auto [index, name] : llvm::enumerate(gate.qubits)) {
+        if (!gateScope.declareQReg(name, 1, gateBlock.getArgument(index))) {
+            mlir::emitError(loc) << "redefinition of '" << name << "'";
+            hadError = true;
+            return mlir::failure();
+        }
+    }
 
     QASM3Visitor gateBodyVisitor{
         context,
@@ -538,6 +548,12 @@ QASM3Visitor::resolveRegisterSize(qasm3Parser::DesignatorContext* designator)
 std::any QASM3Visitor::visitQuantumDeclarationStatement(
     qasm3Parser::QuantumDeclarationStatementContext* ctx)
 {
+    const auto id = ctx->Identifier()->getText();
+    if (scope.contains(id)) {
+        error(ctx, "redefinition of '" + id + "'");
+        return {};
+    }
+
     auto size = resolveRegisterSize(ctx->qubitType()->designator());
     if (mlir::failed(size)) return {};
 
@@ -548,9 +564,8 @@ std::any QASM3Visitor::visitQuantumDeclarationStatement(
         type,
         mlir::IntegerAttr{});
 
-    // Add the qubit to the scope
-    auto id = ctx->Identifier()->getText();
-    scope.declareQReg(id, *size, alloc.getResult());
+    if (!scope.declareQReg(id, *size, alloc.getResult()))
+        error(ctx, "redefinition of '" + id + "'");
 
     return {};
 }
@@ -559,6 +574,10 @@ std::any QASM3Visitor::visitClassicalDeclarationStatement(
     qasm3Parser::ClassicalDeclarationStatementContext* ctx)
 {
     const auto id = ctx->Identifier()->getText();
+    if (scope.contains(id)) {
+        error(ctx, "redefinition of '" + id + "'");
+        return {};
+    }
 
     if (auto ty = ctx->arrayType()) {
         error(ctx, "Array declarations not implemented yet for '" + id + "'");
@@ -583,7 +602,8 @@ std::any QASM3Visitor::visitClassicalDeclarationStatement(
             rankedTy,
             mlir::DenseElementsAttr::get(rankedTy, builder.getBoolAttr(false)));
 
-        scope.declareCReg(id, *size, op.getResult());
+        if (!scope.declareCReg(id, *size, op.getResult()))
+            error(ctx, "redefinition of '" + id + "'");
         return {};
     }
     error(ctx, "Semantic problem with the classical declaration statement");

@@ -119,13 +119,23 @@ QASM2Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
         gateBlock.addArgument(type, loc);
 
     QASMScope gateScope;
-    for (auto [index, name] : llvm::enumerate(gate.parameters))
-        gateScope.declareCReg(
-            name,
-            1,
-            gateBlock.getArgument(gate.qubits.size() + index));
-    for (auto [index, name] : llvm::enumerate(gate.qubits))
-        gateScope.declareQReg(name, 1, gateBlock.getArgument(index));
+    for (auto [index, name] : llvm::enumerate(gate.parameters)) {
+        if (!gateScope.declareCReg(
+                name,
+                1,
+                gateBlock.getArgument(gate.qubits.size() + index))) {
+            mlir::emitError(loc) << "redefinition of '" << name << "'";
+            hadError = true;
+            return mlir::failure();
+        }
+    }
+    for (auto [index, name] : llvm::enumerate(gate.qubits)) {
+        if (!gateScope.declareQReg(name, 1, gateBlock.getArgument(index))) {
+            mlir::emitError(loc) << "redefinition of '" << name << "'";
+            hadError = true;
+            return mlir::failure();
+        }
+    }
 
     QASM2Visitor gateBodyVisitor{
         context,
@@ -299,7 +309,7 @@ std::any QASM2Visitor::visitOldStyleDeclarationStatement(
 {
     const std::string name = ctx->Identifier()->getText();
 
-    if (scope.lookupQReg(name) || scope.lookupCReg(name)) {
+    if (scope.contains(name)) {
         error(ctx, "redefinition of '" + name + "'");
         return {};
     }
@@ -319,14 +329,16 @@ std::any QASM2Visitor::visitOldStyleDeclarationStatement(
             type,
             mlir::IntegerAttr{});
 
-        scope.declareQReg(name, *size, alloc.getResult());
+        if (!scope.declareQReg(name, *size, alloc.getResult()))
+            error(ctx, "redefinition of '" + name + "'");
 
         return {};
     }
 
     if (ctx->CREG()) {
         // TODO: Create an tensor::empty op
-        scope.declareCReg(name, *size, mlir::Value{});
+        if (!scope.declareCReg(name, *size, mlir::Value{}))
+            error(ctx, "redefinition of '" + name + "'");
         return {};
     }
 
