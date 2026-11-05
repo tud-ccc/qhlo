@@ -59,33 +59,93 @@ void QASMScope::QuantumRegister::updateWholeRegister(mlir::Value value)
     intervals.set(0, size, value);
 }
 
+QASMScope::Declaration* QASMScope::lookupLocal(llvm::StringRef name)
+{
+    auto it = declarations.find(name);
+    return it == declarations.end() ? nullptr : &it->second;
+}
+
+const QASMScope::Declaration* QASMScope::lookupLocal(llvm::StringRef name) const
+{
+    auto it = declarations.find(name);
+    return it == declarations.end() ? nullptr : &it->second;
+}
+
+QASMScope::Declaration* QASMScope::lookup(llvm::StringRef name)
+{
+    if (auto* declaration = lookupLocal(name)) return declaration;
+    return parent ? parent->lookup(name) : nullptr;
+}
+
+const QASMScope::Declaration* QASMScope::lookup(llvm::StringRef name) const
+{
+    if (auto* declaration = lookupLocal(name)) return declaration;
+    return parent ? parent->lookup(name) : nullptr;
+}
+
 QASMScope::QuantumRegister* QASMScope::lookupQReg(llvm::StringRef name)
 {
-    auto it = qregs_.find(name);
-    return it == qregs_.end() ? nullptr : &it->second;
+    auto* declaration = lookup(name);
+    if (!declaration) return nullptr;
+    auto* reg = std::get_if<QuantumRegister*>(&declaration->payload);
+    return reg ? *reg : nullptr;
 }
 
 QASMScope::ClassicalRegister* QASMScope::lookupCReg(llvm::StringRef name)
 {
-    auto it = cregs_.find(name);
-    return it == cregs_.end() ? nullptr : &it->second;
+    auto* declaration = lookup(name);
+    if (!declaration) return nullptr;
+    auto* reg = std::get_if<ClassicalRegister*>(&declaration->payload);
+    return reg ? *reg : nullptr;
 }
 
 bool QASMScope::contains(llvm::StringRef name) const
-{ return qregs_.contains(name) || cregs_.contains(name); }
+{ return declarations.contains(name); }
+
+QASMScope::Variable* QASMScope::declareVariable(
+    llvm::StringRef name,
+    mlir::Value value,
+    mlir::LocationAttr location)
+{
+    assert(value && "variable must have an initial SSA value");
+    auto [it, inserted] =
+        declarations.try_emplace(name, Declaration{Variable{value}, location});
+    return inserted ? &std::get<Variable>(it->second.payload) : nullptr;
+}
+
+QASMScope::Constant* QASMScope::declareConstant(
+    llvm::StringRef name,
+    mlir::TypedAttr value,
+    mlir::LocationAttr location)
+{
+    assert(value && "constant must have an evaluated value");
+    auto [it, inserted] =
+        declarations.try_emplace(name, Declaration{Constant{value}, location});
+    return inserted ? &std::get<Constant>(it->second.payload) : nullptr;
+}
+
+QASMScope::Gate*
+QASMScope::declareGate(llvm::StringRef name, mlir::LocationAttr location)
+{
+    auto [it, inserted] =
+        declarations.try_emplace(name, Declaration{Gate{}, location});
+    return inserted ? &std::get<Gate>(it->second.payload) : nullptr;
+}
 
 QASMScope::ClassicalRegister* QASMScope::declareCReg(
     llvm::StringRef name,
     unsigned size,
-    mlir::Value initialValue)
+    mlir::Value initialValue,
+    mlir::LocationAttr location)
 {
-    if (qregs_.contains(name)) return nullptr;
+    if (contains(name)) return nullptr;
     auto [it, inserted] = cregs_.try_emplace(name);
     if (!inserted) return nullptr;
 
     auto &reg = it->second;
     reg.size = size;
     reg.value = initialValue;
+    declarations.try_emplace(name, Declaration{&reg, location});
     return &reg;
 }
 
@@ -93,11 +153,12 @@ QASMScope::QuantumRegister* QASMScope::declareQReg(
     llvm::StringRef name,
     unsigned size,
     mlir::Value initialValue,
-    bool isScalar)
+    bool isScalar,
+    mlir::LocationAttr location)
 {
     assert(
         (!isScalar || size == 1) && "scalar quantum registers have one qubit");
-    if (cregs_.contains(name)) return nullptr;
+    if (contains(name)) return nullptr;
     auto [it, inserted] = qregs_.try_emplace(name);
     if (!inserted) return nullptr;
 
@@ -105,6 +166,7 @@ QASMScope::QuantumRegister* QASMScope::declareQReg(
     reg.size = size;
     reg.isScalar = isScalar;
     reg.updateWholeRegister(initialValue);
+    declarations.try_emplace(name, Declaration{&reg, location});
     return &reg;
 }
 

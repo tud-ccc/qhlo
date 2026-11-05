@@ -64,6 +64,7 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM3(
     // Shared state for this QASM translation unit.
     QASMScope scope;
     GateLibrary gateLibrary;
+    QASMIncludeResolver includeResolver;
 
     QASM3Visitor visitor(
         context,
@@ -72,7 +73,9 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM3(
         mainCircuit,
         filename,
         scope,
-        gateLibrary);
+        gateLibrary,
+        includeResolver,
+        translationUnit);
 
     visitor.visit(program);
 

@@ -70,6 +70,7 @@ set(LLVM_REQUIRES_EH ON)
 
 add_mlir_library(QuantumQASM3Frontend
     QASM3Frontend.cpp
+    QASM3TranslationUnit.cpp
     QASM3Visitor.cpp
 
     EXCLUDE_FROM_LIBMLIR

@@ -15,8 +15,10 @@
 #include <charconv>
 #include <limits>
 #include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/ScopeExit.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/Twine.h>
+#include <llvm/Support/Error.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/LogicalResult.h>
 #include <llvm/Support/MathExtras.h>
@@ -44,7 +46,9 @@ QASM3Visitor::QASM3Visitor(
     mlir::qpu::CircuitOp mainCircuit,
     llvm::StringRef filename,
     QASMScope &scope,
-    GateLibrary &gateLibrary)
+    GateLibrary &gateLibrary,
+    QASMIncludeResolver &includeResolver,
+    QASM3TranslationUnit &translationUnit)
         : context(context),
           module(module),
           qpuModule(qpuModule),
@@ -52,7 +56,9 @@ QASM3Visitor::QASM3Visitor(
           mainCircuit(mainCircuit),
           filename(filename.str()),
           scope(scope),
-          gateLibrary(gateLibrary)
+          gateLibrary(gateLibrary),
+          includeResolver(includeResolver),
+          translationUnit(translationUnit)
 {
     context.loadDialect<mlir::arith::ArithDialect, mlir::math::MathDialect>();
     builder.setInsertionPointToEnd(&mainCircuit.getBody().front());
@@ -123,12 +129,21 @@ QASM3Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
     for (auto type : gate.gateOp.getArgumentTypes())
         gateBlock.addArgument(type, loc);
 
-    QASMScope gateScope;
+    QASMScope constantScope;
+    for (const auto &[name, value] : gate.constants) {
+        if (!constantScope.declareConstant(name, value)) {
+            mlir::emitError(loc)
+                << "duplicate captured constant '" << name << "'";
+            hadError = true;
+            return mlir::failure();
+        }
+    }
+    QASMScope gateScope(&constantScope);
     for (auto [index, name] : llvm::enumerate(gate.parameters)) {
-        if (!gateScope.declareCReg(
+        if (!gateScope.declareVariable(
                 name,
-                1,
-                gateBlock.getArgument(gate.qubits.size() + index))) {
+                gateBlock.getArgument(gate.qubits.size() + index),
+                loc)) {
             mlir::emitError(loc) << "redefinition of '" << name << "'";
             hadError = true;
             return mlir::failure();
@@ -150,7 +165,9 @@ QASM3Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
         mainCircuit,
         gate.filename,
         gateScope,
-        gateLibrary};
+        gateLibrary,
+        includeResolver,
+        translationUnit};
 
     gateBodyVisitor.builder.setInsertionPointToEnd(&gateBlock);
     gateBodyVisitor.visitScope(gate.body);
@@ -202,6 +219,216 @@ getMlirType(mlir::MLIRContext &context, qasm3Parser::ScalarTypeContext* type)
 
 } // namespace
 
+mlir::FailureOr<QASMScope::Declaration*> QASM3Visitor::resolveIdentifier(
+    llvm::StringRef name,
+    antlr4::ParserRuleContext* ctx)
+{
+    if (auto* declaration = scope.lookup(name)) return declaration;
+    error(ctx, "unknown identifier '" + name + "'");
+    return mlir::failure();
+}
+
+mlir::FailureOr<mlir::TypedAttr>
+QASM3Visitor::evaluateConstant(qasm3Parser::ExpressionContext* expression)
+{
+    if (auto* parens = dynamic_cast<qasm3Parser::ParenthesisExpressionContext*>(
+            expression))
+        return evaluateConstant(parens->expression());
+    if (auto* literal =
+            dynamic_cast<qasm3Parser::LiteralExpressionContext*>(expression)) {
+        if (auto* identifier = literal->Identifier()) {
+            auto declaration =
+                resolveIdentifier(identifier->getText(), expression);
+            if (mlir::failed(declaration)) return mlir::failure();
+            if (auto* constant =
+                    std::get_if<QASMScope::Constant>(&(*declaration)->payload))
+                return constant->value;
+            error(expression, "expected a compile-time constant");
+            return mlir::failure();
+        }
+        if (auto* node = literal->DecimalIntegerLiteral()) {
+            const auto text = node->getText();
+            int64_t value;
+            const auto [end, ec] =
+                std::from_chars(text.data(), text.data() + text.size(), value);
+            if (ec != std::errc{} || end != text.data() + text.size()) {
+                error(expression, "invalid numeric literal '" + text + "'");
+                return mlir::failure();
+            }
+            return mlir::cast<mlir::TypedAttr>(
+                builder.getI64IntegerAttr(value));
+        }
+        if (auto* node = literal->FloatLiteral()) {
+            double value;
+            if (llvm::StringRef(node->getText()).getAsDouble(value)) {
+                error(expression, "invalid floating-point literal");
+                return mlir::failure();
+            }
+            return mlir::cast<mlir::TypedAttr>(builder.getF64FloatAttr(value));
+        }
+        if (auto* node = literal->BooleanLiteral())
+            return mlir::cast<mlir::TypedAttr>(
+                builder.getBoolAttr(node->getText() == "true"));
+        error(expression, "unsupported constant literal");
+        return mlir::failure();
+    }
+    if (auto* unary =
+            dynamic_cast<qasm3Parser::UnaryExpressionContext*>(expression)) {
+        if (unary->op->getType() == qasm3Parser::MINUS) {
+            auto operand = evaluateConstant(unary->expression());
+            if (mlir::failed(operand)) return mlir::failure();
+            if (auto real = mlir::dyn_cast<mlir::FloatAttr>(*operand)) {
+                auto value = real.getValue();
+                value.changeSign();
+                return mlir::cast<mlir::TypedAttr>(
+                    mlir::FloatAttr::get(real.getType(), value));
+            }
+        }
+    }
+    auto integer = evaluateConstantInteger(expression);
+    if (mlir::failed(integer)) return mlir::failure();
+    return mlir::cast<mlir::TypedAttr>(builder.getI64IntegerAttr(*integer));
+}
+
+mlir::FailureOr<mlir::TypedAttr> QASM3Visitor::convertConstant(
+    mlir::TypedAttr value,
+    mlir::Type type,
+    antlr4::ParserRuleContext* ctx)
+{
+    if (value.getType() == type) return value;
+    if (auto integer = mlir::dyn_cast<mlir::IntegerAttr>(value)) {
+        if (!integer.getType().isInteger(1)) {
+            if (auto target = mlir::dyn_cast<mlir::IntegerType>(type)) {
+                if (target.getWidth() > 1
+                    && integer.getValue().isSignedIntN(target.getWidth()))
+                    return mlir::cast<mlir::TypedAttr>(mlir::IntegerAttr::get(
+                        type,
+                        integer.getValue().sextOrTrunc(target.getWidth())));
+            }
+            if (type.isF64())
+                return mlir::cast<mlir::TypedAttr>(builder.getF64FloatAttr(
+                    static_cast<double>(integer.getValue().getSExtValue())));
+        }
+    }
+    error(
+        ctx,
+        "initializer or expression type does not match the declared type");
+    return mlir::failure();
+}
+
+mlir::FailureOr<mlir::Type>
+QASM3Visitor::resolveScalarType(qasm3Parser::ScalarTypeContext* type)
+{
+    if (type->BOOL()) return builder.getI1Type();
+    if (type->INT() || type->FLOAT()) {
+        int64_t width = 64;
+        if (auto* designator = type->designator()) {
+            auto resolved = evaluateConstantInteger(designator->expression());
+            if (mlir::failed(resolved)) return mlir::failure();
+            width = *resolved;
+        }
+        if (type->INT() && width >= 2 && width <= 64)
+            return builder.getIntegerType(static_cast<unsigned>(width));
+        if (type->FLOAT() && width == 64) return builder.getF64Type();
+        error(type, "supported scalar widths are int[2..64] and float[64]");
+        return mlir::failure();
+    }
+    error(type, "unsupported scalar type");
+    return mlir::failure();
+}
+
+mlir::FailureOr<mlir::Value> QASM3Visitor::emitRValue(
+    QASMScope::Declaration &declaration,
+    antlr4::ParserRuleContext* ctx)
+{
+    if (auto* variable = std::get_if<QASMScope::Variable>(&declaration.payload))
+        return variable->value;
+    if (auto* constant = std::get_if<QASMScope::Constant>(&declaration.payload))
+        return mlir::arith::ConstantOp::create(
+                   builder,
+                   getLocation(ctx),
+                   constant->value)
+            .getResult();
+    if (auto* reg =
+            std::get_if<QASMScope::ClassicalRegister*>(&declaration.payload)) {
+        if ((*reg)->value) return (*reg)->value;
+    }
+    error(ctx, "identifier does not denote a classical value");
+    return mlir::failure();
+}
+
+mlir::FailureOr<mlir::Value> QASM3Visitor::emitExpression(
+    qasm3Parser::ExpressionContext* expression,
+    mlir::Type expectedType)
+{
+    if (auto* parens = dynamic_cast<qasm3Parser::ParenthesisExpressionContext*>(
+            expression))
+        return emitExpression(parens->expression(), expectedType);
+    if (auto* literal =
+            dynamic_cast<qasm3Parser::LiteralExpressionContext*>(expression)) {
+        if (auto* identifier = literal->Identifier()) {
+            auto declaration =
+                resolveIdentifier(identifier->getText(), expression);
+            if (mlir::failed(declaration)) return mlir::failure();
+            if (!std::holds_alternative<QASMScope::Constant>(
+                    (*declaration)->payload)) {
+                auto value = emitRValue(**declaration, expression);
+                if (mlir::failed(value)) return mlir::failure();
+                if (expectedType && value->getType() != expectedType) {
+                    error(
+                        expression,
+                        "expression type does not match the expected type");
+                    return mlir::failure();
+                }
+                return *value;
+            }
+        }
+        auto constant = evaluateConstant(expression);
+        if (mlir::failed(constant)) return mlir::failure();
+        if (expectedType) {
+            constant = convertConstant(*constant, expectedType, expression);
+            if (mlir::failed(constant)) return mlir::failure();
+        }
+        return mlir::arith::ConstantOp::create(
+                   builder,
+                   getLocation(expression),
+                   *constant)
+            .getResult();
+    }
+    // Constant expressions use the same checked evaluator as register indices.
+    // Runtime arithmetic is lowered separately once its operators are
+    // supported.
+    auto constant = evaluateConstant(expression);
+    if (mlir::failed(constant)) return mlir::failure();
+    if (expectedType) {
+        constant = convertConstant(*constant, expectedType, expression);
+        if (mlir::failed(constant)) return mlir::failure();
+    }
+    return mlir::arith::ConstantOp::create(
+               builder,
+               getLocation(expression),
+               *constant)
+        .getResult();
+}
+
+mlir::LogicalResult QASM3Visitor::assign(
+    QASMScope::Declaration &declaration,
+    mlir::Value value,
+    antlr4::ParserRuleContext* ctx)
+{
+    auto* variable = std::get_if<QASMScope::Variable>(&declaration.payload);
+    if (!variable) {
+        error(ctx, "assignment requires a mutable scalar variable");
+        return mlir::failure();
+    }
+    if (variable->value.getType() != value.getType()) {
+        error(ctx, "assignment must preserve the variable type");
+        return mlir::failure();
+    }
+    variable->value = value;
+    return mlir::success();
+}
+
 mlir::FailureOr<int64_t> QASM3Visitor::evaluateBinaryInteger(
     qasm3Parser::ExpressionContext* expression,
     size_t op,
@@ -251,11 +478,15 @@ mlir::FailureOr<int64_t> QASM3Visitor::evaluateConstantInteger(
     if (auto* parens = dynamic_cast<qasm3Parser::ParenthesisExpressionContext*>(
             expression))
         return evaluateConstantInteger(parens->expression());
-    if (auto* literal =
-            dynamic_cast<qasm3Parser::LiteralExpressionContext*>(expression)) {
-        auto value = literal->accept(this);
-        if (hadError) return mlir::failure();
-        if (auto* integer = std::any_cast<int64_t>(&value)) return *integer;
+    if (dynamic_cast<qasm3Parser::LiteralExpressionContext*>(expression)) {
+        auto value = evaluateConstant(expression);
+        if (mlir::failed(value)) return mlir::failure();
+        if (auto integer = mlir::dyn_cast<mlir::IntegerAttr>(*value)) {
+            if (!integer.getType().isInteger(1))
+                return integer.getValue().getSExtValue();
+        }
+        error(expression, "expected a constant integer expression");
+        return mlir::failure();
     }
     if (auto* unary =
             dynamic_cast<qasm3Parser::UnaryExpressionContext*>(expression)) {
@@ -434,6 +665,17 @@ QASM3Visitor::visitGateStatement(qasm3Parser::GateStatementContext* ctx)
         .filename = filename,
     };
 
+    for (const auto &entry : scope.getDeclarations())
+        if (const auto* constant =
+                std::get_if<QASMScope::Constant>(&entry.getValue().payload))
+            definition.constants.emplace_back(
+                entry.getKey().str(),
+                constant->value);
+
+    if (!scope.declareGate(name, getLocation(ctx))) {
+        error(ctx, "redefinition of '" + name + "'");
+        return {};
+    }
     if (!gateLibrary.insert(std::move(definition)))
         error(ctx, llvm::Twine("gate '") + name + "' already defined");
     return {};
@@ -450,35 +692,21 @@ QASM3Visitor::visitGateCallStatement(qasm3Parser::GateCallStatementContext* ctx)
 
     /// Gate name for emission
     const auto name = ctx->Identifier()->getText();
+    if (auto* declaration = scope.lookup(name);
+        declaration
+        && !std::holds_alternative<QASMScope::Gate>(declaration->payload)) {
+        error(ctx, "identifier '" + name + "' does not denote a gate");
+        return {};
+    }
 
     llvm::SmallVector<mlir::Value> parameterValues;
     if (auto* classicOperands = ctx->expressionList()) {
         const auto expressions = classicOperands->expression();
         parameterValues.reserve(expressions.size());
         for (auto* expression : expressions) {
-            auto resolved = expression->accept(this);
-            if (hadError) return {};
-
-            mlir::Value value;
-            if (auto* operand = std::any_cast<mlir::Value>(&resolved)) {
-                value = *operand;
-            } else if (auto* integer = std::any_cast<int64_t>(&resolved)) {
-                value = mlir::arith::ConstantOp::create(
-                    builder,
-                    getLocation(expression),
-                    builder.getF64FloatAttr(static_cast<double>(*integer)));
-            } else if (auto* real = std::any_cast<double>(&resolved)) {
-                value = mlir::arith::ConstantOp::create(
-                    builder,
-                    getLocation(expression),
-                    builder.getF64FloatAttr(*real));
-            }
-
-            if (!value || !value.getType().isF64()) {
-                error(expression, "gate parameters must have type f64");
-                return {};
-            }
-            parameterValues.push_back(value);
+            auto value = emitExpression(expression, builder.getF64Type());
+            if (mlir::failed(value)) return {};
+            parameterValues.push_back(*value);
         }
     }
 
@@ -606,7 +834,72 @@ QASM3Visitor::visitGateCallStatement(qasm3Parser::GateCallStatementContext* ctx)
 // ################################################################################
 
 std::any QASM3Visitor::visitProgram(qasm3Parser::ProgramContext* ctx)
-{ return visitChildren(ctx); }
+{
+    translationUnit.enterSource(filename);
+    llvm::scope_exit guard([&] { translationUnit.leaveSource(); });
+    return visitChildren(ctx);
+}
+
+std::any
+QASM3Visitor::visitIncludeStatement(qasm3Parser::IncludeStatementContext* ctx)
+{
+    // Includes extend global scope; they do not introduce a scope of their own.
+    auto* statement = ctx->parent;
+    auto* statementOrScope = statement ? statement->parent : nullptr;
+    if (!statementOrScope
+        || !dynamic_cast<qasm3Parser::ProgramContext*>(
+            statementOrScope->parent)) {
+        error(ctx, "include statements are only allowed at global scope");
+        return {};
+    }
+
+    const auto text = ctx->StringLiteral()->getText();
+    if (text.size() < 2 || (text.front() != '"' && text.front() != '\'')
+        || text.back() != text.front()) {
+        error(ctx, "malformed include statement");
+        return {};
+    }
+    const auto includeName = llvm::StringRef(text).drop_front().drop_back();
+    auto resolved = includeResolver.resolve(includeName, filename);
+    if (!resolved) {
+        error(
+            ctx,
+            "failed to resolve include '" + includeName
+                + "': " + llvm::toString(resolved.takeError()));
+        return {};
+    }
+    if (translationUnit.isSourceActive(resolved->filename)) {
+        error(ctx, "include cycle detected for '" + includeName + "'");
+        return {};
+    }
+
+    auto &source = translationUnit.addSource(
+        context,
+        resolved->source,
+        resolved->filename);
+    auto* program = source.parseInclude();
+    if (!program || source.failed()) {
+        hadError = true;
+        return {};
+    }
+
+    QASM3Visitor includeVisitor{
+        context,
+        module,
+        qpuModule,
+        mainCircuit,
+        resolved->filename,
+        scope,
+        gateLibrary,
+        includeResolver,
+        translationUnit};
+    // Preserve the surrounding insertion point when lowering executable code
+    // from an include, rather than relying on the visitor's default point.
+    includeVisitor.builder.restoreInsertionPoint(builder.saveInsertionPoint());
+    includeVisitor.visit(program);
+    if (includeVisitor.failed()) hadError = true;
+    return {};
+}
 
 std::any QASM3Visitor::visitVersion(qasm3Parser::VersionContext* ctx)
 {
@@ -621,39 +914,16 @@ std::any QASM3Visitor::visitVersion(qasm3Parser::VersionContext* ctx)
 
 std::any QASM3Visitor::visitParenthesisExpression(
     qasm3Parser::ParenthesisExpressionContext* ctx)
-{ return ctx->expression()->accept(this); }
+{
+    auto value = emitExpression(ctx);
+    return mlir::succeeded(value) ? std::any(*value) : std::any{};
+}
 
 std::any
 QASM3Visitor::visitLiteralExpression(qasm3Parser::LiteralExpressionContext* ctx)
 {
-    // Identifier
-    if (auto node = ctx->Identifier()) {
-        auto id = node->getText();
-        if (auto* parameter = scope.lookupCReg(id)) return parameter->value;
-        error(ctx, "unknown parameter '" + id + "'");
-        return {};
-    }
-    // antlr4::tree::TerminalNode* BinaryIntegerLiteral();
-    // antlr4::tree::TerminalNode* OctalIntegerLiteral();
-    if (auto node = ctx->DecimalIntegerLiteral()) {
-        const std::string text = node->getText();
-        int64_t value;
-        const auto [end, ec] =
-            std::from_chars(text.data(), text.data() + text.size(), value);
-        if (ec != std::errc{} || end != text.data() + text.size()) {
-            error(ctx, "invalid numeric literal '" + text + "'");
-            return {};
-        }
-        return value;
-    }
-    // antlr4::tree::TerminalNode* HexIntegerLiteral();
-    // antlr4::tree::TerminalNode* FloatLiteral();
-    // antlr4::tree::TerminalNode* ImaginaryLiteral();
-    // antlr4::tree::TerminalNode* BooleanLiteral();
-    // antlr4::tree::TerminalNode* BitstringLiteral();
-    // antlr4::tree::TerminalNode* TimingLiteral();
-    // antlr4::tree::TerminalNode* HardwareQubit();
-    return {};
+    auto value = emitExpression(ctx);
+    return mlir::succeeded(value) ? std::any(*value) : std::any{};
 }
 
 std::any
@@ -690,22 +960,22 @@ QASM3Visitor::resolveRegisterSize(qasm3Parser::DesignatorContext* designator)
         return mlir::failure();
     }
 
-    auto resolved = expression->accept(this);
-    if (hadError) return mlir::failure();
-
-    auto* size = std::any_cast<int64_t>(&resolved);
-    if (!size) {
+    auto value = evaluateConstant(expression);
+    if (mlir::failed(value)) return mlir::failure();
+    auto integer = mlir::dyn_cast<mlir::IntegerAttr>(*value);
+    if (!integer || integer.getType().isInteger(1)) {
         error(designator, "expected a constant integer register length");
         return mlir::failure();
     }
-    if (*size <= 0 || *size > std::numeric_limits<unsigned>::max()) {
+    const int64_t size = integer.getValue().getSExtValue();
+    if (size <= 0 || size > std::numeric_limits<unsigned>::max()) {
         error(
             designator,
             "register length must be a positive unsigned integer");
         return mlir::failure();
     }
 
-    return static_cast<unsigned>(*size);
+    return static_cast<unsigned>(size);
 }
 
 std::any QASM3Visitor::visitQuantumDeclarationStatement(
@@ -731,7 +1001,8 @@ std::any QASM3Visitor::visitQuantumDeclarationStatement(
             id,
             *size,
             alloc.getResult(),
-            !ctx->qubitType()->designator()))
+            !ctx->qubitType()->designator(),
+            getLocation(ctx)))
         error(ctx, "redefinition of '" + id + "'");
 
     return {};
@@ -746,8 +1017,30 @@ std::any QASM3Visitor::visitClassicalDeclarationStatement(
         return {};
     }
 
-    if (auto ty = ctx->arrayType()) {
+    if (ctx->arrayType()) {
         error(ctx, "Array declarations not implemented yet for '" + id + "'");
+        return {};
+    }
+
+    if (auto* type = ctx->scalarType(); type && !type->BIT()) {
+        auto resolvedType = resolveScalarType(type);
+        if (mlir::failed(resolvedType)) return {};
+        mlir::Value value;
+        if (auto* initializer = ctx->declarationExpression()) {
+            if (!initializer->expression()) {
+                error(ctx, "expected a scalar initializer");
+                return {};
+            }
+            auto initial =
+                emitExpression(initializer->expression(), *resolvedType);
+            if (mlir::failed(initial)) return {};
+            value = *initial;
+        } else {
+            error(ctx, "scalar variables require an initializer");
+            return {};
+        }
+        if (!scope.declareVariable(id, value, getLocation(ctx)))
+            error(ctx, "redefinition of '" + id + "'");
         return {};
     }
 
@@ -769,7 +1062,7 @@ std::any QASM3Visitor::visitClassicalDeclarationStatement(
             rankedTy,
             mlir::DenseElementsAttr::get(rankedTy, builder.getBoolAttr(false)));
 
-        if (!scope.declareCReg(id, *size, op.getResult()))
+        if (!scope.declareCReg(id, *size, op.getResult(), getLocation(ctx)))
             error(ctx, "redefinition of '" + id + "'");
         return {};
     }
@@ -780,7 +1073,24 @@ std::any QASM3Visitor::visitClassicalDeclarationStatement(
 std::any QASM3Visitor::visitConstDeclarationStatement(
     qasm3Parser::ConstDeclarationStatementContext* ctx)
 {
-    error(ctx, "ConstDeclarationStatementContext not implemented yet.");
+    const auto name = ctx->Identifier()->getText();
+    if (scope.contains(name)) {
+        error(ctx, "redefinition of '" + name + "'");
+        return {};
+    }
+    auto type = resolveScalarType(ctx->scalarType());
+    if (mlir::failed(type)) return {};
+    auto* expression = ctx->declarationExpression()->expression();
+    if (!expression) {
+        error(ctx, "expected a scalar constant initializer");
+        return {};
+    }
+    auto initial = evaluateConstant(expression);
+    if (mlir::failed(initial)) return {};
+    auto value = convertConstant(*initial, *type, ctx);
+    if (mlir::failed(value)) return {};
+    if (!scope.declareConstant(name, *value, getLocation(ctx)))
+        error(ctx, "redefinition of '" + name + "'");
     return {};
 }
 
@@ -881,7 +1191,18 @@ std::any QASM3Visitor::visitAssignmentStatement(
         error(ctx, "quantum call assignments are not supported");
         return {};
     }
-    error(ctx, "classical expression assignments are not supported");
+    auto* identifier = ctx->indexedIdentifier();
+    auto declaration =
+        resolveIdentifier(identifier->Identifier()->getText(), ctx);
+    if (mlir::failed(declaration)) return {};
+    auto* variable = std::get_if<QASMScope::Variable>(&(*declaration)->payload);
+    if (!variable || !identifier->indexOperator().empty()) {
+        error(ctx, "assignment requires a mutable scalar variable");
+        return {};
+    }
+    auto value = emitExpression(ctx->expression(), variable->value.getType());
+    if (mlir::failed(value)) return {};
+    (void)assign(**declaration, *value, ctx);
     return {};
 }
 

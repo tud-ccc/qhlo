@@ -12,12 +12,18 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringMap.h>
 #include <mlir/IR/Builders.h>
+#include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/Value.h>
+#include <variant>
 
 namespace quantum::frontend {
 
 class QASMScope {
 public:
+    explicit QASMScope(QASMScope* parent = nullptr) : parent(parent) {}
+    QASMScope(const QASMScope &) = delete;
+    QASMScope &operator=(const QASMScope &) = delete;
+
     struct QuantumRegister {
         unsigned size;
         // Scalar qubits broadcast differently from one-element registers.
@@ -48,6 +54,48 @@ public:
         unsigned size;
         mlir::Value value;
     };
+
+    struct Variable {
+        mlir::Value value;
+    };
+
+    struct Constant {
+        mlir::TypedAttr value;
+    };
+
+    // Gate bodies remain owned by the translation unit and GateLibrary.
+    struct Gate {};
+
+    struct Declaration {
+        using Payload = std::variant<
+            QuantumRegister*,
+            ClassicalRegister*,
+            Variable,
+            Constant,
+            Gate>;
+        Payload payload;
+        mlir::LocationAttr location;
+    };
+
+    // The declaration map is the sole authority for name lookup and collisions.
+    const llvm::StringMap<Declaration> &getDeclarations() const
+    { return declarations; }
+
+    Declaration* lookupLocal(llvm::StringRef name);
+    const Declaration* lookupLocal(llvm::StringRef name) const;
+    Declaration* lookup(llvm::StringRef name);
+    const Declaration* lookup(llvm::StringRef name) const;
+
+    [[nodiscard]] Variable* declareVariable(
+        llvm::StringRef name,
+        mlir::Value value,
+        mlir::LocationAttr location = {});
+    [[nodiscard]] Constant* declareConstant(
+        llvm::StringRef name,
+        mlir::TypedAttr value,
+        mlir::LocationAttr location = {});
+    [[nodiscard]] Gate*
+    declareGate(llvm::StringRef name, mlir::LocationAttr location = {});
 
     // Describes an assembled quantum operand and its original selection.
     // After assembly, callers must restore its result before accessing the
@@ -108,6 +156,7 @@ public:
     QuantumRegister* lookupQReg(llvm::StringRef name);
     ClassicalRegister* lookupCReg(llvm::StringRef name);
 
+    // Checks the current scope so declarations may shadow outer bindings.
     bool contains(llvm::StringRef name) const;
 
     const llvm::StringMap<QuantumRegister> &getQRegs() const { return qregs_; }
@@ -115,16 +164,20 @@ public:
     const llvm::StringMap<ClassicalRegister> &getCRegs() const
     { return cregs_; }
 
-    // Declarations return null on a name collision with either register kind
+    // Declarations return null on a name collision with any declaration kind
     // and leave the existing register unchanged.
     [[nodiscard]] QuantumRegister* declareQReg(
         llvm::StringRef name,
         unsigned size,
         mlir::Value initialValue,
-        bool isScalar = false);
+        bool isScalar = false,
+        mlir::LocationAttr location = {});
 
-    [[nodiscard]] ClassicalRegister*
-    declareCReg(llvm::StringRef name, unsigned size, mlir::Value initialValue);
+    [[nodiscard]] ClassicalRegister* declareCReg(
+        llvm::StringRef name,
+        unsigned size,
+        mlir::Value initialValue,
+        mlir::LocationAttr location = {});
 
     /// @brief Materializes a single qubit, splitting its register interval if
     /// needed.
@@ -147,6 +200,9 @@ public:
         mlir::Location loc);
 
 private:
+    QASMScope* parent;
+    llvm::StringMap<Declaration> declarations;
+    // Register maps own lowering state and support register-only iteration.
     llvm::StringMap<QuantumRegister> qregs_;
     llvm::StringMap<ClassicalRegister> cregs_;
 };

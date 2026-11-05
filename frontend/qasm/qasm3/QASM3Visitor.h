@@ -7,6 +7,8 @@
 #define QUANTUM_MLIR_FRONTEND_QASM_QASM3_QASM3VISITOR_H
 
 #include "GateLibrary.h"
+#include "QASM3TranslationUnit.h"
+#include "QASMIncludeResolver.h"
 #include "QASMScope.h"
 #include "qasm3Parser.h"
 #include "qasm3ParserBaseVisitor.h"
@@ -38,11 +40,16 @@ public:
         mlir::qpu::CircuitOp mainCircuit,
         llvm::StringRef filename,
         QASMScope &scope,
-        GateLibrary &gateLibrary);
+        GateLibrary &gateLibrary,
+        QASMIncludeResolver &includeResolver,
+        QASM3TranslationUnit &translationUnit);
 
     bool failed() const { return hadError; }
 
     std::any visitProgram(qasm3Parser::ProgramContext* ctx) override;
+
+    std::any
+    visitIncludeStatement(qasm3Parser::IncludeStatementContext* ctx) override;
 
     std::any visitVersion(qasm3Parser::VersionContext* ctx) override;
 
@@ -95,6 +102,33 @@ private:
         bool isScalar;
     };
 
+    mlir::FailureOr<QASMScope::Declaration*>
+    resolveIdentifier(llvm::StringRef name, antlr4::ParserRuleContext* ctx);
+
+    mlir::FailureOr<mlir::TypedAttr>
+    evaluateConstant(qasm3Parser::ExpressionContext* expression);
+
+    mlir::FailureOr<mlir::TypedAttr> convertConstant(
+        mlir::TypedAttr value,
+        mlir::Type type,
+        antlr4::ParserRuleContext* ctx);
+
+    mlir::FailureOr<mlir::Type>
+    resolveScalarType(qasm3Parser::ScalarTypeContext* type);
+
+    mlir::FailureOr<mlir::Value> emitRValue(
+        QASMScope::Declaration &declaration,
+        antlr4::ParserRuleContext* ctx);
+
+    mlir::FailureOr<mlir::Value> emitExpression(
+        qasm3Parser::ExpressionContext* expression,
+        mlir::Type expectedType = {});
+
+    mlir::LogicalResult assign(
+        QASMScope::Declaration &declaration,
+        mlir::Value value,
+        antlr4::ParserRuleContext* ctx);
+
     mlir::FailureOr<int64_t> evaluateBinaryInteger(
         qasm3Parser::ExpressionContext* expression,
         size_t op,
@@ -139,6 +173,8 @@ private:
 
     QASMScope &scope;
     GateLibrary &gateLibrary;
+    QASMIncludeResolver &includeResolver;
+    QASM3TranslationUnit &translationUnit;
 
     // TODO: write hadError on failure
     bool hadError = false;

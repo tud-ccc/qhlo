@@ -24,7 +24,18 @@ public:
     { return getParser().program(); }
 };
 
-using QASM3TranslationUnit = QASMTranslationUnit<ParsedQASM3Source>;
+class QASM3TranslationUnit final
+        : public QASMTranslationUnit<ParsedQASM3Source> {
+public:
+    // Track the active expansion chain rather than all previously read files.
+    // Repeated non-recursive includes must still contribute declarations.
+    bool isSourceActive(llvm::StringRef filename) const;
+    void enterSource(llvm::StringRef filename);
+    void leaveSource();
+
+private:
+    llvm::SmallVector<std::string> activeSources;
+};
 
 } // namespace quantum::frontend::qasm3
 

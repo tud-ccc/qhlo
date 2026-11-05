@@ -729,6 +729,14 @@ QASM2Visitor::visitGateStatement(qasm2Parser::GateStatementContext* ctx)
         .filename = filename,
     };
 
+    if (!scope.declareGate(name, getLocation(ctx))) {
+        if (std::holds_alternative<QASMScope::Gate>(
+                scope.lookup(name)->payload))
+            error(ctx, llvm::Twine("gate '") + name + "' already defined");
+        else
+            error(ctx, "redefinition of '" + name + "'");
+        return {};
+    }
     if (!gateLibrary.insert(std::move(definition)))
         error(ctx, llvm::Twine("gate '") + name + "' already defined");
     return {};

@@ -11,6 +11,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringRef.h>
+#include <mlir/IR/BuiltinAttributes.h>
 #include <string>
 #include <utility>
 
@@ -27,6 +28,8 @@ struct GateDefinition {
     std::string filename;
     mlir::quantum::GateOp gateOp;
     bool realized{false};
+    // Capture values at the definition, not at deferred realization.
+    llvm::SmallVector<std::pair<std::string, mlir::TypedAttr>> constants;
 };
 
 template<typename BodyContext>
