@@ -6,6 +6,7 @@
 #ifndef QUANTUM_MLIR_FRONTEND_QASM_COMMON_GATELIBRARY_H
 #define QUANTUM_MLIR_FRONTEND_QASM_COMMON_GATELIBRARY_H
 
+#include "QASMScope.h"
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumOps.h"
 
 #include <llvm/ADT/SmallVector.h>
@@ -28,8 +29,8 @@ struct GateDefinition {
     std::string filename;
     mlir::quantum::GateOp gateOp;
     bool realized{false};
-    // Capture values at the definition, not at deferred realization.
-    llvm::SmallVector<std::pair<std::string, mlir::TypedAttr>> constants;
+    QASMScope::Position lexicalPosition;
+    bool realizing = false;
 };
 
 template<typename BodyContext>

@@ -9,7 +9,9 @@
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumTypes.h"
 
 #include <cassert>
+#include <llvm/ADT/StringSet.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
+#include <utility>
 
 namespace quantum::frontend {
 
@@ -59,28 +61,112 @@ void QASMScope::QuantumRegister::updateWholeRegister(mlir::Value value)
     intervals.set(0, size, value);
 }
 
+QASMScope::QASMScope() { enterScope({}, LexicalScope::Kind::Global); }
+
+QASMScope::Position QASMScope::getPosition() const
+{ return {currentScope, currentScope->lastDeclaration}; }
+
+QASMScope::LexicalScope &
+QASMScope::enterScope(Position enclosingPosition, LexicalScope::Kind kind)
+{
+    // Scope objects must not move: positions retain their addresses.
+    auto scope = std::unique_ptr<LexicalScope>(
+        new LexicalScope(kind, enclosingPosition));
+    currentScope = scope.get();
+    lexicalScopes.push_back(std::move(scope));
+    return *currentScope;
+}
+
+QASMScope::LexicalScope &QASMScope::enterScope(LexicalScope::Kind kind)
+{ return enterScope(getPosition(), kind); }
+
+void QASMScope::setCurrentScope(LexicalScope &scope) { currentScope = &scope; }
+
 QASMScope::Declaration* QASMScope::lookupLocal(llvm::StringRef name)
 {
-    auto it = declarations.find(name);
-    return it == declarations.end() ? nullptr : &it->second;
+    auto it = currentScope->declarations.find(name);
+    return it == currentScope->declarations.end() ? nullptr : &it->second;
 }
 
 const QASMScope::Declaration* QASMScope::lookupLocal(llvm::StringRef name) const
 {
-    auto it = declarations.find(name);
-    return it == declarations.end() ? nullptr : &it->second;
+    auto it = currentScope->declarations.find(name);
+    return it == currentScope->declarations.end() ? nullptr : &it->second;
+}
+
+const QASMScope::Declaration*
+QASMScope::lookup(Position position, llvm::StringRef name) const
+{
+    bool restrictCapture = false;
+    while (position.scope) {
+        for (auto* declaration = position.declaration; declaration;
+             declaration = declaration->previous) {
+            if (declaration->name != name) continue;
+            // An inaccessible declaration still hides declarations of the same
+            // name further out; never fall through to a different binding.
+            if (restrictCapture
+                && !std::holds_alternative<Constant>(declaration->payload)
+                && !std::holds_alternative<Gate>(declaration->payload))
+                return nullptr;
+            return declaration;
+        }
+        const auto kind = position.scope->kind;
+        restrictCapture |= kind == LexicalScope::Kind::Gate
+                           || kind == LexicalScope::Kind::Subroutine;
+        position = position.scope->enclosingPosition;
+    }
+    return nullptr;
+}
+
+QASMScope::Declaration*
+QASMScope::lookup(Position position, llvm::StringRef name)
+{
+    return const_cast<Declaration*>(
+        std::as_const(*this).lookup(position, name));
 }
 
 QASMScope::Declaration* QASMScope::lookup(llvm::StringRef name)
-{
-    if (auto* declaration = lookupLocal(name)) return declaration;
-    return parent ? parent->lookup(name) : nullptr;
-}
+{ return lookup(getPosition(), name); }
 
 const QASMScope::Declaration* QASMScope::lookup(llvm::StringRef name) const
+{ return lookup(getPosition(), name); }
+
+llvm::SmallVector<QASMScope::QuantumRegister*>
+QASMScope::getVisibleQRegs() const
 {
-    if (auto* declaration = lookupLocal(name)) return declaration;
-    return parent ? parent->lookup(name) : nullptr;
+    llvm::SmallVector<QuantumRegister*> registers;
+    llvm::StringSet<> seen;
+    for (auto position = getPosition(); position.scope;
+         position = position.scope->enclosingPosition) {
+        for (auto* declaration = position.declaration; declaration;
+             declaration = declaration->previous) {
+            if (!seen.insert(declaration->name).second) continue;
+            if (auto* reg =
+                    std::get_if<QuantumRegister*>(&declaration->payload))
+                registers.push_back(*reg);
+        }
+        const auto kind = position.scope->kind;
+        if (kind == LexicalScope::Kind::Gate
+            || kind == LexicalScope::Kind::Subroutine)
+            break;
+    }
+    return registers;
+}
+
+QASMScope::Declaration* QASMScope::declare(
+    llvm::StringRef name,
+    Declaration::Payload payload,
+    mlir::LocationAttr location)
+{
+    auto [it, inserted] = currentScope->declarations.try_emplace(
+        name,
+        Declaration{std::move(payload), location, {}, nullptr});
+    if (!inserted) return nullptr;
+    auto &declaration = it->second;
+    declaration.name = it->getKey();
+    declaration.previous = currentScope->lastDeclaration;
+    currentScope->lastDeclaration = &declaration;
+    return &declaration;
 }
 
 QASMScope::QuantumRegister* QASMScope::lookupQReg(llvm::StringRef name)
@@ -100,7 +186,7 @@ QASMScope::ClassicalRegister* QASMScope::lookupCReg(llvm::StringRef name)
 }
 
 bool QASMScope::contains(llvm::StringRef name) const
-{ return declarations.contains(name); }
+{ return lookupLocal(name) != nullptr; }
 
 QASMScope::Variable* QASMScope::declareVariable(
     llvm::StringRef name,
@@ -108,9 +194,8 @@ QASMScope::Variable* QASMScope::declareVariable(
     mlir::LocationAttr location)
 {
     assert(value && "variable must have an initial SSA value");
-    auto [it, inserted] =
-        declarations.try_emplace(name, Declaration{Variable{value}, location});
-    return inserted ? &std::get<Variable>(it->second.payload) : nullptr;
+    auto* declaration = declare(name, Variable{value}, location);
+    return declaration ? &std::get<Variable>(declaration->payload) : nullptr;
 }
 
 QASMScope::Constant* QASMScope::declareConstant(
@@ -119,17 +204,15 @@ QASMScope::Constant* QASMScope::declareConstant(
     mlir::LocationAttr location)
 {
     assert(value && "constant must have an evaluated value");
-    auto [it, inserted] =
-        declarations.try_emplace(name, Declaration{Constant{value}, location});
-    return inserted ? &std::get<Constant>(it->second.payload) : nullptr;
+    auto* declaration = declare(name, Constant{value}, location);
+    return declaration ? &std::get<Constant>(declaration->payload) : nullptr;
 }
 
 QASMScope::Gate*
 QASMScope::declareGate(llvm::StringRef name, mlir::LocationAttr location)
 {
-    auto [it, inserted] =
-        declarations.try_emplace(name, Declaration{Gate{}, location});
-    return inserted ? &std::get<Gate>(it->second.payload) : nullptr;
+    auto* declaration = declare(name, Gate{}, location);
+    return declaration ? &std::get<Gate>(declaration->payload) : nullptr;
 }
 
 QASMScope::ClassicalRegister* QASMScope::declareCReg(
@@ -139,13 +222,13 @@ QASMScope::ClassicalRegister* QASMScope::declareCReg(
     mlir::LocationAttr location)
 {
     if (contains(name)) return nullptr;
-    auto [it, inserted] = cregs_.try_emplace(name);
+    auto [it, inserted] = currentScope->cregs.try_emplace(name);
     if (!inserted) return nullptr;
 
     auto &reg = it->second;
     reg.size = size;
     reg.value = initialValue;
-    declarations.try_emplace(name, Declaration{&reg, location});
+    declare(name, &reg, location);
     return &reg;
 }
 
@@ -159,14 +242,14 @@ QASMScope::QuantumRegister* QASMScope::declareQReg(
     assert(
         (!isScalar || size == 1) && "scalar quantum registers have one qubit");
     if (contains(name)) return nullptr;
-    auto [it, inserted] = qregs_.try_emplace(name);
+    auto [it, inserted] = currentScope->qregs.try_emplace(name);
     if (!inserted) return nullptr;
 
     auto &reg = it->second;
     reg.size = size;
     reg.isScalar = isScalar;
     reg.updateWholeRegister(initialValue);
-    declarations.try_emplace(name, Declaration{&reg, location});
+    declare(name, &reg, location);
     return &reg;
 }
 

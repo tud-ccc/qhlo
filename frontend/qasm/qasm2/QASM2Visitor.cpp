@@ -16,6 +16,7 @@
 #include <llvm/ADT/APInt.h>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/ScopeExit.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/Twine.h>
 #include <llvm/Support/LogicalResult.h>
@@ -79,7 +80,14 @@ getGateOperands(qasm2Parser::GateCallStatementContext* call)
 mlir::LogicalResult
 QASM2Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
 {
+    if (gate.realizing) {
+        mlir::emitError(loc) << "recursive gate call to '" << gate.name << "'";
+        hadError = true;
+        return mlir::failure();
+    }
     if (gate.realized) return mlir::success();
+    gate.realizing = true;
+    llvm::scope_exit realizationGuard([&] { gate.realizing = false; });
 
     mlir::OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPoint(mainCircuit.getOperation());
@@ -118,9 +126,11 @@ QASM2Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
     for (auto type : gate.gateOp.getArgumentTypes())
         gateBlock.addArgument(type, loc);
 
-    QASMScope gateScope;
+    auto &enclosingScope = scope.getCurrentScope();
+    scope.enterScope(gate.lexicalPosition, QASMScope::LexicalScope::Kind::Gate);
+    llvm::scope_exit scopeGuard([&] { scope.setCurrentScope(enclosingScope); });
     for (auto [index, name] : llvm::enumerate(gate.parameters)) {
-        if (!gateScope.declareCReg(
+        if (!scope.declareCReg(
                 name,
                 1,
                 gateBlock.getArgument(gate.qubits.size() + index))) {
@@ -130,7 +140,7 @@ QASM2Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
         }
     }
     for (auto [index, name] : llvm::enumerate(gate.qubits)) {
-        if (!gateScope.declareQReg(name, 1, gateBlock.getArgument(index))) {
+        if (!scope.declareQReg(name, 1, gateBlock.getArgument(index))) {
             mlir::emitError(loc) << "redefinition of '" << name << "'";
             hadError = true;
             return mlir::failure();
@@ -143,7 +153,7 @@ QASM2Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
         qpuModule,
         mainCircuit,
         gate.filename,
-        gateScope,
+        scope,
         gateLibrary,
         includeResolver,
         translationUnit};
@@ -158,8 +168,7 @@ QASM2Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
     llvm::SmallVector<mlir::Value> returnValues;
     returnValues.reserve(gate.qubits.size());
     for (const auto &name : gate.qubits)
-        returnValues.push_back(
-            gateScope.lookupQReg(name)->getWholeRegisterValue());
+        returnValues.push_back(scope.lookupQReg(name)->getWholeRegisterValue());
     mlir::quantum::ReturnOp::create(gateBodyVisitor.builder, loc, returnValues);
 
     return mlir::success();
@@ -639,6 +648,18 @@ QASM2Visitor::visitGateCallStatement(qasm2Parser::GateCallStatementContext* ctx)
     else if (ctx->CX())
         name = "cx";
 
+    auto* declaration = scope.lookup(name);
+    if (declaration
+        && !std::holds_alternative<QASMScope::Gate>(declaration->payload)) {
+        error(ctx, "identifier '" + name + "' does not denote a gate");
+        return {};
+    }
+    auto* visibleGate = declaration ? gateLibrary.lookup(name) : nullptr;
+    if (visibleGate && visibleGate->realizing) {
+        error(ctx, "recursive gate call to '" + name + "'");
+        return {};
+    }
+
     llvm::SmallVector<mlir::Value> results;
     if (auto spec = lookupNativeQuantumGate(name)) {
 
@@ -656,7 +677,7 @@ QASM2Visitor::visitGateCallStatement(qasm2Parser::GateCallStatementContext* ctx)
         results = std::move(*result);
     } else {
         // Lookup gate definition
-        auto gate = gateLibrary.lookup(name);
+        auto* gate = visibleGate;
         // Gate was not visited and registered
         if (!gate) {
             error(
@@ -737,6 +758,7 @@ QASM2Visitor::visitGateStatement(qasm2Parser::GateStatementContext* ctx)
             error(ctx, "redefinition of '" + name + "'");
         return {};
     }
+    definition.lexicalPosition = scope.getPosition();
     if (!gateLibrary.insert(std::move(definition)))
         error(ctx, llvm::Twine("gate '") + name + "' already defined");
     return {};

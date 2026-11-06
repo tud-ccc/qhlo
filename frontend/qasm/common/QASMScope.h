@@ -11,6 +11,7 @@
 
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringMap.h>
+#include <memory>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/Value.h>
@@ -20,7 +21,7 @@ namespace quantum::frontend {
 
 class QASMScope {
 public:
-    explicit QASMScope(QASMScope* parent = nullptr) : parent(parent) {}
+    QASMScope();
     QASMScope(const QASMScope &) = delete;
     QASMScope &operator=(const QASMScope &) = delete;
 
@@ -75,11 +76,54 @@ public:
             Gate>;
         Payload payload;
         mlir::LocationAttr location;
+        llvm::StringRef name;
+        Declaration* previous = nullptr;
     };
 
-    // The declaration map is the sole authority for name lookup and collisions.
-    const llvm::StringMap<Declaration> &getDeclarations() const
-    { return declarations; }
+    class LexicalScope;
+
+    // A position is an immutable view of the declarations visible at a point
+    // in the source. The owner keeps scopes and declarations alive until all
+    // deferred lowering has finished.
+    struct Position {
+        LexicalScope* scope = nullptr;
+        Declaration* declaration = nullptr;
+    };
+
+    class LexicalScope {
+    public:
+        enum class Kind { Global, Block, Gate, Subroutine };
+        LexicalScope(const LexicalScope &) = delete;
+        LexicalScope &operator=(const LexicalScope &) = delete;
+
+        Kind getKind() const { return kind; }
+        Position getEnclosingPosition() const { return enclosingPosition; }
+
+    private:
+        friend class QASMScope;
+        LexicalScope(Kind kind, Position enclosingPosition)
+                : kind(kind),
+                  enclosingPosition(enclosingPosition)
+        {}
+
+        Kind kind;
+        Position enclosingPosition;
+        Declaration* lastDeclaration = nullptr;
+        llvm::StringMap<Declaration> declarations;
+        llvm::StringMap<QuantumRegister> qregs;
+        llvm::StringMap<ClassicalRegister> cregs;
+    };
+
+    LexicalScope &getCurrentScope() { return *currentScope; }
+    const LexicalScope &getCurrentScope() const { return *currentScope; }
+    Position getPosition() const;
+    LexicalScope &
+    enterScope(Position enclosingPosition, LexicalScope::Kind kind);
+    LexicalScope &enterScope(LexicalScope::Kind kind);
+    void setCurrentScope(LexicalScope &scope);
+
+    Declaration* lookup(Position position, llvm::StringRef name);
+    const Declaration* lookup(Position position, llvm::StringRef name) const;
 
     Declaration* lookupLocal(llvm::StringRef name);
     const Declaration* lookupLocal(llvm::StringRef name) const;
@@ -159,10 +203,13 @@ public:
     // Checks the current scope so declarations may shadow outer bindings.
     bool contains(llvm::StringRef name) const;
 
-    const llvm::StringMap<QuantumRegister> &getQRegs() const { return qregs_; }
+    const llvm::StringMap<QuantumRegister> &getQRegs() const
+    { return currentScope->qregs; }
+
+    llvm::SmallVector<QuantumRegister*> getVisibleQRegs() const;
 
     const llvm::StringMap<ClassicalRegister> &getCRegs() const
-    { return cregs_; }
+    { return currentScope->cregs; }
 
     // Declarations return null on a name collision with any declaration kind
     // and leave the existing register unchanged.
@@ -200,11 +247,12 @@ public:
         mlir::Location loc);
 
 private:
-    QASMScope* parent;
-    llvm::StringMap<Declaration> declarations;
-    // Register maps own lowering state and support register-only iteration.
-    llvm::StringMap<QuantumRegister> qregs_;
-    llvm::StringMap<ClassicalRegister> cregs_;
+    Declaration* declare(
+        llvm::StringRef name,
+        Declaration::Payload payload,
+        mlir::LocationAttr location);
+    llvm::SmallVector<std::unique_ptr<LexicalScope>> lexicalScopes;
+    LexicalScope* currentScope = nullptr;
 };
 
 } // namespace quantum::frontend

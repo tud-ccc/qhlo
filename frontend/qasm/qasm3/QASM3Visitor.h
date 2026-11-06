@@ -48,6 +48,8 @@ public:
 
     std::any visitProgram(qasm3Parser::ProgramContext* ctx) override;
 
+    std::any visitScope(qasm3Parser::ScopeContext* ctx) override;
+
     std::any
     visitIncludeStatement(qasm3Parser::IncludeStatementContext* ctx) override;
 

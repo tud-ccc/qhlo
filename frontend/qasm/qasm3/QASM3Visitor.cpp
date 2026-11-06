@@ -90,7 +90,14 @@ void QASM3Visitor::error(
 mlir::LogicalResult
 QASM3Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
 {
+    if (gate.realizing) {
+        mlir::emitError(loc) << "recursive gate call to '" << gate.name << "'";
+        hadError = true;
+        return mlir::failure();
+    }
     if (gate.realized) return mlir::success();
+    gate.realizing = true;
+    llvm::scope_exit realizationGuard([&] { gate.realizing = false; });
 
     mlir::OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPoint(mainCircuit.getOperation());
@@ -129,18 +136,11 @@ QASM3Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
     for (auto type : gate.gateOp.getArgumentTypes())
         gateBlock.addArgument(type, loc);
 
-    QASMScope constantScope;
-    for (const auto &[name, value] : gate.constants) {
-        if (!constantScope.declareConstant(name, value)) {
-            mlir::emitError(loc)
-                << "duplicate captured constant '" << name << "'";
-            hadError = true;
-            return mlir::failure();
-        }
-    }
-    QASMScope gateScope(&constantScope);
+    auto &enclosingScope = scope.getCurrentScope();
+    scope.enterScope(gate.lexicalPosition, QASMScope::LexicalScope::Kind::Gate);
+    llvm::scope_exit scopeGuard([&] { scope.setCurrentScope(enclosingScope); });
     for (auto [index, name] : llvm::enumerate(gate.parameters)) {
-        if (!gateScope.declareVariable(
+        if (!scope.declareVariable(
                 name,
                 gateBlock.getArgument(gate.qubits.size() + index),
                 loc)) {
@@ -150,8 +150,7 @@ QASM3Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
         }
     }
     for (auto [index, name] : llvm::enumerate(gate.qubits)) {
-        if (!gateScope
-                 .declareQReg(name, 1, gateBlock.getArgument(index), true)) {
+        if (!scope.declareQReg(name, 1, gateBlock.getArgument(index), true)) {
             mlir::emitError(loc) << "redefinition of '" << name << "'";
             hadError = true;
             return mlir::failure();
@@ -164,13 +163,13 @@ QASM3Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
         qpuModule,
         mainCircuit,
         gate.filename,
-        gateScope,
+        scope,
         gateLibrary,
         includeResolver,
         translationUnit};
 
     gateBodyVisitor.builder.setInsertionPointToEnd(&gateBlock);
-    gateBodyVisitor.visitScope(gate.body);
+    gateBodyVisitor.visitChildren(gate.body);
     if (gateBodyVisitor.failed()) {
         hadError = true;
         return mlir::failure();
@@ -179,8 +178,7 @@ QASM3Visitor::ensureGateDefinition(GateDefinition &gate, mlir::Location loc)
     llvm::SmallVector<mlir::Value> returnValues;
     returnValues.reserve(gate.qubits.size());
     for (const auto &name : gate.qubits)
-        returnValues.push_back(
-            gateScope.lookupQReg(name)->getWholeRegisterValue());
+        returnValues.push_back(scope.lookupQReg(name)->getWholeRegisterValue());
     mlir::quantum::ReturnOp::create(gateBodyVisitor.builder, loc, returnValues);
 
     return mlir::success();
@@ -640,6 +638,11 @@ QASM3Visitor::resolveQuantumOperand(
 std::any
 QASM3Visitor::visitGateStatement(qasm3Parser::GateStatementContext* ctx)
 {
+    if (scope.getCurrentScope().getKind()
+        != QASMScope::LexicalScope::Kind::Global) {
+        error(ctx, "gate declarations are only allowed at global scope");
+        return {};
+    }
     const std::string name = ctx->Identifier()->getText();
 
     llvm::SmallVector<std::string> parameters;
@@ -665,17 +668,11 @@ QASM3Visitor::visitGateStatement(qasm3Parser::GateStatementContext* ctx)
         .filename = filename,
     };
 
-    for (const auto &entry : scope.getDeclarations())
-        if (const auto* constant =
-                std::get_if<QASMScope::Constant>(&entry.getValue().payload))
-            definition.constants.emplace_back(
-                entry.getKey().str(),
-                constant->value);
-
     if (!scope.declareGate(name, getLocation(ctx))) {
         error(ctx, "redefinition of '" + name + "'");
         return {};
     }
+    definition.lexicalPosition = scope.getPosition();
     if (!gateLibrary.insert(std::move(definition)))
         error(ctx, llvm::Twine("gate '") + name + "' already defined");
     return {};
@@ -692,8 +689,8 @@ QASM3Visitor::visitGateCallStatement(qasm3Parser::GateCallStatementContext* ctx)
 
     /// Gate name for emission
     const auto name = ctx->Identifier()->getText();
-    if (auto* declaration = scope.lookup(name);
-        declaration
+    auto* declaration = scope.lookup(name);
+    if (declaration
         && !std::holds_alternative<QASMScope::Gate>(declaration->payload)) {
         error(ctx, "identifier '" + name + "' does not denote a gate");
         return {};
@@ -719,7 +716,12 @@ QASM3Visitor::visitGateCallStatement(qasm3Parser::GateCallStatementContext* ctx)
 
     const auto loc = getLocation(ctx);
     auto native = lookupNativeQuantumGate(name);
-    auto* gate = native ? nullptr : gateLibrary.lookup(name);
+    auto* visibleGate = declaration ? gateLibrary.lookup(name) : nullptr;
+    if (visibleGate && visibleGate->realizing) {
+        error(ctx, "recursive gate call to '" + name + "'");
+        return {};
+    }
+    auto* gate = native ? nullptr : visibleGate;
     if (!native && !gate) {
         error(ctx, "gate '" + name + "' cannot be resolved");
         return {};
@@ -832,6 +834,14 @@ QASM3Visitor::visitGateCallStatement(qasm3Parser::GateCallStatementContext* ctx)
 // ################################################################################
 // # Program and Version
 // ################################################################################
+
+std::any QASM3Visitor::visitScope(qasm3Parser::ScopeContext* ctx)
+{
+    auto &enclosingScope = scope.getCurrentScope();
+    scope.enterScope(QASMScope::LexicalScope::Kind::Block);
+    llvm::scope_exit guard([&] { scope.setCurrentScope(enclosingScope); });
+    return visitChildren(ctx);
+}
 
 std::any QASM3Visitor::visitProgram(qasm3Parser::ProgramContext* ctx)
 {
@@ -981,6 +991,11 @@ QASM3Visitor::resolveRegisterSize(qasm3Parser::DesignatorContext* designator)
 std::any QASM3Visitor::visitQuantumDeclarationStatement(
     qasm3Parser::QuantumDeclarationStatementContext* ctx)
 {
+    if (scope.getCurrentScope().getKind()
+        != QASMScope::LexicalScope::Kind::Global) {
+        error(ctx, "quantum declarations are only allowed at global scope");
+        return {};
+    }
     const auto id = ctx->Identifier()->getText();
     if (scope.contains(id)) {
         error(ctx, "redefinition of '" + id + "'");
@@ -1252,11 +1267,11 @@ QASM3Visitor::visitBarrierStatement(qasm3Parser::BarrierStatementContext* ctx)
             requests.push_back(*resolved);
         }
     } else {
-        for (const auto &entry : scope.getQRegs())
+        for (auto* reg : scope.getVisibleQRegs())
             requests.push_back({
-                scope.lookupQReg(entry.getKey()),
-                {0, entry.getValue().size, 1},
-                entry.getValue().isScalar
+                reg,
+                {0, reg->size, 1},
+                reg->isScalar
             });
     }
     for (const auto &request : requests)
