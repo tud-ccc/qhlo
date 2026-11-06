@@ -11,7 +11,9 @@
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumOps.h"
 
 #include <antlr4-runtime.h>
+#include <cassert>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/StringRef.h>
 #include <llvm/Support/Path.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
@@ -21,8 +23,33 @@
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/Location.h>
+#include <numbers>
 
 namespace quantum::frontend::qasm3 {
+
+static void declareBuiltins(QASMScope &scope, mlir::MLIRContext &context)
+{
+    struct BuiltinConstant {
+        llvm::StringLiteral name;
+        double value;
+    };
+    const BuiltinConstant constants[] = {
+        {    "pi",     std::numbers::pi_v<double>},
+        {"\u03C0",     std::numbers::pi_v<double>},
+        {   "tau", 2 * std::numbers::pi_v<double>},
+        {"\u03C4", 2 * std::numbers::pi_v<double>},
+        { "euler",      std::numbers::e_v<double>},
+        {"\u2107",      std::numbers::e_v<double>},
+    };
+    mlir::Builder builder(&context);
+    for (const auto &constant : constants) {
+        auto value = mlir::cast<mlir::TypedAttr>(
+            builder.getF64FloatAttr(constant.value));
+        [[maybe_unused]] auto* declaration =
+            scope.declareConstant(constant.name, value);
+        assert(declaration && "builtin names must be unique");
+    }
+}
 
 mlir::OwningOpRef<mlir::ModuleOp> parseQASM3(
     llvm::StringRef source,
@@ -63,6 +90,7 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM3(
 
     // Shared state for this QASM translation unit.
     QASMScope scope;
+    declareBuiltins(scope, context);
     GateLibrary gateLibrary;
     QASMIncludeResolver includeResolver;
 
