@@ -86,7 +86,8 @@ if(FRONTEND_QASM)
     list(APPEND INTEGRATION_TEST_DIRS
         ${CMAKE_CURRENT_BINARY_DIR}/Integration/frontend/qasm2
         ${CMAKE_CURRENT_BINARY_DIR}/Integration/frontend/qasm3)
-    list(APPEND FRONTEND_TEST_DEPENDS FileCheck count not quantum-qasm quantum-opt)
+    list(APPEND FRONTEND_TEST_DEPENDS
+        FileCheck count not split-file quantum-qasm quantum-opt)
     list(APPEND INTEGRATION_TEST_DEPENDS
         FileCheck count not quantum-qasm quantum-opt)
 endif()

@@ -76,7 +76,7 @@ c ^= measure q;
 // Classical.
 OPENQASM 3.0;
 bit c;
-// expected-error @+1 {{classical expression assignments are not supported}}
+// expected-error @+1 {{assignment requires a mutable scalar variable}}
 c = 0;
 
 // -----

@@ -95,3 +95,11 @@ qreg q[1];
 reset q[999999999999999999999999999999999999];
 // CHECK: error: invalid integer literal '999999999999999999999999999999999999'
 // CHECK-NOT: error:
+
+// -----
+
+// A barrier uses the same checked register indexing as other quantum operations.
+OPENQASM 2.0;
+qreg q[1];
+barrier q[1];
+// CHECK: loc("{{.*}}semantic-errors.qasm":{{[0-9]+}}:{{[0-9]+}}): error: invalid or out-of-range qubit index

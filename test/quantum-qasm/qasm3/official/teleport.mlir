@@ -9,4 +9,7 @@
 
 // CHECK: qpu.module @teleport
 // CHECK: sym_name = "main"
+// Conditional correction must stay conditional after scalar literals lower.
+// CHECK: scf.if
+// CHECK: scf.if
 // CHECK: "qpu.return"

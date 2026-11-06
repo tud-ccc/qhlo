@@ -79,7 +79,7 @@ tools = [
 ]
 
 if config.enable_frontend_qasm:
-    tools.append("quantum-qasm")
+    tools.extend(["quantum-qasm", "split-file"])
 
 if config.enable_backend_qir:
     tools.extend([

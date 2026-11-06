@@ -47,7 +47,7 @@ h q[0:1.5:3];
 OPENQASM 3.0;
 qubit[4] q;
 bit[4] c;
-// expected-error @+1 {{expected a constant integer expression}}
+// expected-error @+1 {{expected a compile-time constant}}
 h q[0:c:3];
 
 // -----
@@ -55,7 +55,7 @@ h q[0:c:3];
 // Unknown.
 OPENQASM 3.0;
 qubit[4] q;
-// expected-error @+1 {{unknown parameter 'missing'}}
+// expected-error @+1 {{unknown identifier 'missing'}}
 h q[missing:3];
 
 // -----

@@ -213,4 +213,171 @@ TEST_CASE("Selection validation avoids overflowing index arithmetic")
         (RegisterSlice{4, 1, std::numeric_limits<int64_t>::min()}.isValid(5)));
 }
 
+TEST_CASE("All declaration kinds share a namespace and preserve collisions")
+{
+    ScopeFixture f;
+    auto value = mlir::arith::ConstantOp::create(
+                     f.builder,
+                     f.loc,
+                     f.builder.getI64IntegerAttr(7))
+                     .getResult();
+    auto constant = mlir::cast<mlir::TypedAttr>(f.builder.getI64IntegerAttr(3));
+    auto qubit = mlir::quantum::AllocOp::create(
+        f.builder,
+        f.loc,
+        mlir::quantum::QubitType::get(&f.context, 1),
+        mlir::IntegerAttr{});
+    for (unsigned kind = 0; kind != 5; ++kind) {
+        quantum::frontend::QASMScope scope;
+        switch (kind) {
+        case 0: REQUIRE(scope.declareQReg("name", 1, qubit.getResult())); break;
+        case 1: REQUIRE(scope.declareCReg("name", 1, value)); break;
+        case 2: REQUIRE(scope.declareVariable("name", value, f.loc)); break;
+        case 3: REQUIRE(scope.declareConstant("name", constant, f.loc)); break;
+        case 4: REQUIRE(scope.declareGate("name", f.loc)); break;
+        }
+        auto* original = scope.lookup("name");
+        REQUIRE(original);
+        CHECK(scope.contains("name"));
+        CHECK_FALSE(scope.declareQReg("name", 1, qubit.getResult()));
+        CHECK_FALSE(scope.declareCReg("name", 1, value));
+        CHECK_FALSE(scope.declareVariable("name", value));
+        CHECK_FALSE(scope.declareConstant("name", constant));
+        CHECK_FALSE(scope.declareGate("name"));
+        CHECK(scope.lookup("name") == original);
+        CHECK((scope.lookupQReg("name") != nullptr) == (kind == 0));
+        CHECK((scope.lookupCReg("name") != nullptr) == (kind == 1));
+    }
+}
+
+TEST_CASE("Lookup resolves the nearest declaration before checking its kind")
+{
+    ScopeFixture f;
+    auto &reg = f.allocate(2);
+    auto value = mlir::arith::ConstantOp::create(
+                     f.builder,
+                     f.loc,
+                     f.builder.getI64IntegerAttr(7))
+                     .getResult();
+    const auto outerPosition = f.scope.getPosition();
+    auto &outerScope = f.scope.getCurrentScope();
+    auto &local = f.scope.enterScope(
+        quantum::frontend::QASMScope::LexicalScope::Kind::Block);
+    CHECK(local.getEnclosingPosition().scope == &outerScope);
+    CHECK(f.scope.lookupQReg("q") == &reg);
+    CHECK(f.scope.lookupLocal("q") == nullptr);
+    CHECK(f.scope.getVisibleQRegs().size() == 1);
+    auto* variable = f.scope.declareVariable("q", value, f.loc);
+    REQUIRE(variable);
+    CHECK(f.scope.lookupQReg("q") == nullptr);
+    CHECK(f.scope.lookupCReg("q") == nullptr);
+    CHECK(f.scope.getVisibleQRegs().empty());
+    CHECK(
+        std::get<quantum::frontend::QASMScope::QuantumRegister*>(
+            f.scope.lookup(outerPosition, "q")->payload)
+        == &reg);
+    const auto &constScope = f.scope;
+    REQUIRE(constScope.lookup("q"));
+    CHECK(constScope.lookup("q")->location == f.loc);
+    CHECK(
+        std::get<quantum::frontend::QASMScope::Variable>(
+            constScope.lookup("q")->payload)
+            .value
+        == value);
+    CHECK(constScope.lookup("missing") == nullptr);
+    f.scope.setCurrentScope(outerScope);
+    CHECK(f.scope.lookupQReg("q") == &reg);
+}
+
+TEST_CASE("Saved lexical positions cannot see later declarations")
+{
+    ScopeFixture f;
+    using Kind = quantum::frontend::QASMScope::LexicalScope::Kind;
+    auto constant = mlir::cast<mlir::TypedAttr>(f.builder.getI64IntegerAttr(3));
+    REQUIRE(f.scope.declareConstant("early", constant));
+    auto* early = f.scope.lookup("early");
+    const auto definitionPosition = f.scope.getPosition();
+    auto &global = f.scope.getCurrentScope();
+    REQUIRE(f.scope.declareConstant("later", constant));
+    REQUIRE(f.scope.declareGate("laterGate"));
+    f.scope.enterScope(definitionPosition, Kind::Gate);
+    CHECK(f.scope.lookup("early") == early);
+    CHECK(f.scope.lookup("later") == nullptr);
+    CHECK(f.scope.lookup("laterGate") == nullptr);
+    CHECK(f.scope.lookup(definitionPosition, "later") == nullptr);
+    REQUIRE(f.scope.declareVariable(
+        "early",
+        mlir::arith::ConstantOp::create(
+            f.builder,
+            f.loc,
+            f.builder.getI64IntegerAttr(7))
+            .getResult()));
+    CHECK(f.scope.lookup("early") != early);
+    f.scope.setCurrentScope(global);
+    CHECK(f.scope.lookup("early") == early);
+    CHECK(f.scope.lookup("later") != nullptr);
+    CHECK(f.scope.lookup("laterGate") != nullptr);
+}
+
+TEST_CASE(
+    "Callable scopes hide mutable outer declarations but blocks inherit them")
+{
+    ScopeFixture f;
+    using Kind = quantum::frontend::QASMScope::LexicalScope::Kind;
+    auto &reg = f.allocate(2);
+    auto value = mlir::arith::ConstantOp::create(
+                     f.builder,
+                     f.loc,
+                     f.builder.getI64IntegerAttr(7))
+                     .getResult();
+    REQUIRE(f.scope.declareVariable("mutable", value));
+    REQUIRE(f.scope.declareGate("callable"));
+    REQUIRE(f.scope.declareConstant(
+        "constant",
+        mlir::cast<mlir::TypedAttr>(f.builder.getI64IntegerAttr(3))));
+    const auto enclosingPosition = f.scope.getPosition();
+    auto &global = f.scope.getCurrentScope();
+    f.scope.enterScope(Kind::Block);
+    CHECK(f.scope.lookupQReg("q") == &reg);
+    CHECK(f.scope.lookup("mutable") != nullptr);
+    for (const auto kind : {Kind::Gate, Kind::Subroutine}) {
+        auto &callable = f.scope.enterScope(enclosingPosition, kind);
+        CHECK(f.scope.lookupQReg("q") == nullptr);
+        CHECK(f.scope.lookup("mutable") == nullptr);
+        CHECK(f.scope.lookup("constant") != nullptr);
+        CHECK(f.scope.lookup("callable") != nullptr);
+        REQUIRE(f.scope.declareVariable("parameter", value));
+        f.scope.enterScope(Kind::Block);
+        CHECK(f.scope.lookup("parameter") != nullptr);
+        CHECK(f.scope.lookup("mutable") == nullptr);
+        f.scope.setCurrentScope(callable);
+    }
+    f.scope.setCurrentScope(global);
+    CHECK(f.scope.lookup("parameter") == nullptr);
+}
+
+TEST_CASE("Nested scopes retain their enclosing declaration position")
+{
+    ScopeFixture f;
+    using Kind = quantum::frontend::QASMScope::LexicalScope::Kind;
+    auto constant = mlir::cast<mlir::TypedAttr>(f.builder.getI64IntegerAttr(3));
+    REQUIRE(f.scope.declareConstant("early", constant));
+    auto* early = f.scope.lookup("early");
+    auto &global = f.scope.getCurrentScope();
+    auto &block = f.scope.enterScope(Kind::Block);
+    REQUIRE(f.scope.declareConstant("local", constant));
+    const auto blockPosition = f.scope.getPosition();
+    f.scope.setCurrentScope(global);
+    REQUIRE(f.scope.declareConstant("later", constant));
+    f.scope.setCurrentScope(block);
+    CHECK(f.scope.lookup("early") == early);
+    CHECK(f.scope.lookup("later") == nullptr);
+    REQUIRE(f.scope.declareConstant("later", constant));
+    CHECK(f.scope.lookup("later") != nullptr);
+    CHECK(f.scope.lookup(blockPosition, "later") == nullptr);
+    const auto beforeCollision = f.scope.getPosition();
+    CHECK_FALSE(f.scope.declareConstant("later", constant));
+    CHECK(f.scope.getPosition().declaration == beforeCollision.declaration);
+}
+
 } // namespace

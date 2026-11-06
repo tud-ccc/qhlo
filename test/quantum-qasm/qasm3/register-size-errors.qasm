@@ -75,14 +75,14 @@ bit[1.5] q;
 
 // Unknown quantum registers.
 OPENQASM 3.0;
-// expected-error @+1 {{unknown parameter 'missing'}}
+// expected-error @+1 {{unknown identifier 'missing'}}
 qubit[missing] q;
 
 // -----
 
 // Unknown classical registers.
 OPENQASM 3.0;
-// expected-error @+1 {{unknown parameter 'missing'}}
+// expected-error @+1 {{unknown identifier 'missing'}}
 bit[missing] q;
 
 // -----
