@@ -131,7 +131,7 @@ private:
         mlir::Value value,
         antlr4::ParserRuleContext* ctx);
 
-    mlir::FailureOr<int64_t> evaluateBinaryInteger(
+    mlir::FailureOr<mlir::TypedAttr> evaluateBinaryConstant(
         qasm3Parser::ExpressionContext* expression,
         size_t op,
         qasm3Parser::ExpressionContext* lhs,

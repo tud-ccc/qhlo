@@ -14,6 +14,7 @@
 #include <any>
 #include <charconv>
 #include <limits>
+#include <llvm/ADT/APFloat.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/ScopeExit.h>
 #include <llvm/ADT/SmallVector.h>
@@ -226,6 +227,92 @@ mlir::FailureOr<QASMScope::Declaration*> QASM3Visitor::resolveIdentifier(
     return mlir::failure();
 }
 
+mlir::FailureOr<mlir::TypedAttr> QASM3Visitor::evaluateBinaryConstant(
+    qasm3Parser::ExpressionContext* expression,
+    size_t op,
+    qasm3Parser::ExpressionContext* lhs,
+    qasm3Parser::ExpressionContext* rhs)
+{
+    auto left = evaluateConstant(lhs);
+    if (mlir::failed(left)) return mlir::failure();
+    auto right = evaluateConstant(rhs);
+    if (mlir::failed(right)) return mlir::failure();
+    auto leftInteger = mlir::dyn_cast<mlir::IntegerAttr>(*left);
+    auto rightInteger = mlir::dyn_cast<mlir::IntegerAttr>(*right);
+    const bool leftIsInteger =
+        leftInteger && !leftInteger.getType().isInteger(1);
+    const bool rightIsInteger =
+        rightInteger && !rightInteger.getType().isInteger(1);
+    if (leftIsInteger && rightIsInteger) {
+        const int64_t lhsValue = leftInteger.getValue().getSExtValue();
+        const int64_t rhsValue = rightInteger.getValue().getSExtValue();
+        int64_t result;
+        bool overflow = false;
+        switch (op) {
+        case qasm3Parser::PLUS:
+            overflow = llvm::AddOverflow(lhsValue, rhsValue, result);
+            break;
+        case qasm3Parser::MINUS:
+            overflow = llvm::SubOverflow(lhsValue, rhsValue, result);
+            break;
+        case qasm3Parser::ASTERISK:
+            overflow = llvm::MulOverflow(lhsValue, rhsValue, result);
+            break;
+        case qasm3Parser::SLASH:
+        case qasm3Parser::PERCENT:
+            if (rhsValue == 0) {
+                error(
+                    expression,
+                    "division by zero in constant integer expression");
+                return mlir::failure();
+            }
+            // Both division and remainder overflow for INT64_MIN and -1 in C++.
+            overflow = lhsValue == std::numeric_limits<int64_t>::min()
+                       && rhsValue == -1;
+            if (!overflow)
+                result = op == qasm3Parser::SLASH ? lhsValue / rhsValue
+                                                  : lhsValue % rhsValue;
+            break;
+        default: llvm_unreachable("unsupported binary integer operator");
+        }
+        if (!overflow)
+            return mlir::cast<mlir::TypedAttr>(
+                builder.getI64IntegerAttr(result));
+        error(expression, "constant integer expression overflows int64");
+        return mlir::failure();
+    }
+    if ((!leftIsInteger && !mlir::isa<mlir::FloatAttr>(*left))
+        || (!rightIsInteger && !mlir::isa<mlir::FloatAttr>(*right))) {
+        error(
+            expression,
+            "expected numeric constants in arithmetic expression");
+        return mlir::failure();
+    }
+    if (op == qasm3Parser::PERCENT) {
+        error(expression, "remainder requires integer constants");
+        return mlir::failure();
+    }
+
+    // Promote mixed operands before arithmetic, independently of the type
+    // expected by the caller. Integer division must remain integer division.
+    auto leftFloat = convertConstant(*left, builder.getF64Type(), lhs);
+    if (mlir::failed(leftFloat)) return mlir::failure();
+    auto rightFloat = convertConstant(*right, builder.getF64Type(), rhs);
+    if (mlir::failed(rightFloat)) return mlir::failure();
+    auto value = mlir::cast<mlir::FloatAttr>(*leftFloat).getValue();
+    const auto &operand = mlir::cast<mlir::FloatAttr>(*rightFloat).getValue();
+    const auto rounding = llvm::APFloat::rmNearestTiesToEven;
+    switch (op) {
+    case qasm3Parser::PLUS: value.add(operand, rounding); break;
+    case qasm3Parser::MINUS: value.subtract(operand, rounding); break;
+    case qasm3Parser::ASTERISK: value.multiply(operand, rounding); break;
+    case qasm3Parser::SLASH: value.divide(operand, rounding); break;
+    default: llvm_unreachable("unsupported binary floating-point operator");
+    }
+    return mlir::cast<mlir::TypedAttr>(
+        mlir::FloatAttr::get(builder.getF64Type(), value));
+}
+
 mlir::FailureOr<mlir::TypedAttr>
 QASM3Visitor::evaluateConstant(qasm3Parser::ExpressionContext* expression)
 {
@@ -281,11 +368,39 @@ QASM3Visitor::evaluateConstant(qasm3Parser::ExpressionContext* expression)
                 return mlir::cast<mlir::TypedAttr>(
                     mlir::FloatAttr::get(real.getType(), value));
             }
+            if (auto integer = mlir::dyn_cast<mlir::IntegerAttr>(*operand);
+                integer && !integer.getType().isInteger(1)) {
+                auto value = integer.getValue().getSExtValue();
+                if (value == std::numeric_limits<int64_t>::min()) {
+                    error(
+                        expression,
+                        "constant integer expression overflows int64");
+                    return mlir::failure();
+                }
+                return mlir::cast<mlir::TypedAttr>(
+                    builder.getI64IntegerAttr(-value));
+            }
+            error(expression, "expected a numeric constant for unary minus");
+            return mlir::failure();
         }
     }
-    auto integer = evaluateConstantInteger(expression);
-    if (mlir::failed(integer)) return mlir::failure();
-    return mlir::cast<mlir::TypedAttr>(builder.getI64IntegerAttr(*integer));
+    if (auto* binary =
+            dynamic_cast<qasm3Parser::AdditiveExpressionContext*>(expression))
+        return evaluateBinaryConstant(
+            expression,
+            binary->op->getType(),
+            binary->expression(0),
+            binary->expression(1));
+    if (auto* binary =
+            dynamic_cast<qasm3Parser::MultiplicativeExpressionContext*>(
+                expression))
+        return evaluateBinaryConstant(
+            expression,
+            binary->op->getType(),
+            binary->expression(0),
+            binary->expression(1));
+    error(expression, "unsupported constant expression");
+    return mlir::failure();
 }
 
 mlir::FailureOr<mlir::TypedAttr> QASM3Visitor::convertConstant(
@@ -303,9 +418,15 @@ mlir::FailureOr<mlir::TypedAttr> QASM3Visitor::convertConstant(
                         type,
                         integer.getValue().sextOrTrunc(target.getWidth())));
             }
-            if (type.isF64())
-                return mlir::cast<mlir::TypedAttr>(builder.getF64FloatAttr(
-                    static_cast<double>(integer.getValue().getSExtValue())));
+            if (type.isF64()) {
+                llvm::APFloat value(llvm::APFloat::IEEEdouble());
+                value.convertFromAPInt(
+                    integer.getValue(),
+                    true,
+                    llvm::APFloat::rmNearestTiesToEven);
+                return mlir::cast<mlir::TypedAttr>(
+                    mlir::FloatAttr::get(type, value));
+            }
         }
     }
     error(
@@ -427,90 +548,15 @@ mlir::LogicalResult QASM3Visitor::assign(
     return mlir::success();
 }
 
-mlir::FailureOr<int64_t> QASM3Visitor::evaluateBinaryInteger(
-    qasm3Parser::ExpressionContext* expression,
-    size_t op,
-    qasm3Parser::ExpressionContext* lhs,
-    qasm3Parser::ExpressionContext* rhs)
-{
-    auto left = evaluateConstantInteger(lhs);
-    if (mlir::failed(left)) return mlir::failure();
-    auto right = evaluateConstantInteger(rhs);
-    if (mlir::failed(right)) return mlir::failure();
-
-    int64_t result;
-    bool overflow = false;
-    switch (op) {
-    case qasm3Parser::PLUS:
-        overflow = llvm::AddOverflow(*left, *right, result);
-        break;
-    case qasm3Parser::MINUS:
-        overflow = llvm::SubOverflow(*left, *right, result);
-        break;
-    case qasm3Parser::ASTERISK:
-        overflow = llvm::MulOverflow(*left, *right, result);
-        break;
-    case qasm3Parser::SLASH:
-    case qasm3Parser::PERCENT:
-        if (*right == 0) {
-            error(
-                expression,
-                "division by zero in constant integer expression");
-            return mlir::failure();
-        }
-        // Both division and remainder overflow for INT64_MIN and -1 in C++.
-        overflow = *left == std::numeric_limits<int64_t>::min() && *right == -1;
-        if (!overflow)
-            return op == qasm3Parser::SLASH ? *left / *right : *left % *right;
-        break;
-    default: llvm_unreachable("unsupported binary integer operator");
-    }
-    if (!overflow) return result;
-    error(expression, "constant integer expression overflows int64");
-    return mlir::failure();
-}
-
 mlir::FailureOr<int64_t> QASM3Visitor::evaluateConstantInteger(
     qasm3Parser::ExpressionContext* expression)
 {
-    if (auto* parens = dynamic_cast<qasm3Parser::ParenthesisExpressionContext*>(
-            expression))
-        return evaluateConstantInteger(parens->expression());
-    if (dynamic_cast<qasm3Parser::LiteralExpressionContext*>(expression)) {
-        auto value = evaluateConstant(expression);
-        if (mlir::failed(value)) return mlir::failure();
-        if (auto integer = mlir::dyn_cast<mlir::IntegerAttr>(*value)) {
-            if (!integer.getType().isInteger(1))
-                return integer.getValue().getSExtValue();
-        }
-        error(expression, "expected a constant integer expression");
-        return mlir::failure();
+    auto value = evaluateConstant(expression);
+    if (mlir::failed(value)) return mlir::failure();
+    if (auto integer = mlir::dyn_cast<mlir::IntegerAttr>(*value)) {
+        if (!integer.getType().isInteger(1))
+            return integer.getValue().getSExtValue();
     }
-    if (auto* unary =
-            dynamic_cast<qasm3Parser::UnaryExpressionContext*>(expression)) {
-        if (unary->op->getType() == qasm3Parser::MINUS) {
-            auto value = evaluateConstantInteger(unary->expression());
-            if (mlir::failed(value)) return mlir::failure();
-            if (*value != std::numeric_limits<int64_t>::min()) return -*value;
-            error(expression, "constant integer expression overflows int64");
-            return mlir::failure();
-        }
-    }
-    if (auto* add =
-            dynamic_cast<qasm3Parser::AdditiveExpressionContext*>(expression))
-        return evaluateBinaryInteger(
-            expression,
-            add->op->getType(),
-            add->expression(0),
-            add->expression(1));
-    if (auto* mul = dynamic_cast<qasm3Parser::MultiplicativeExpressionContext*>(
-            expression))
-        return evaluateBinaryInteger(
-            expression,
-            mul->op->getType(),
-            mul->expression(0),
-            mul->expression(1));
-
     error(expression, "expected a constant integer expression");
     return mlir::failure();
 }
