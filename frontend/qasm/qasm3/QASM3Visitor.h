@@ -17,6 +17,7 @@
 #include <any>
 #include <cstddef>
 #include <cstdint>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringRef.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
@@ -51,6 +52,9 @@ public:
     std::any visitScope(qasm3Parser::ScopeContext* ctx) override;
 
     std::any visitIfStatement(qasm3Parser::IfStatementContext* ctx) override;
+
+    std::any
+    visitWhileStatement(qasm3Parser::WhileStatementContext* ctx) override;
 
     std::any visitStatement(qasm3Parser::StatementContext* ctx) override;
 
@@ -96,6 +100,20 @@ public:
     visitBarrierStatement(qasm3Parser::BarrierStatementContext* ctx) override;
 
 private:
+    struct ControlFlowState {
+        llvm::SmallVector<QASMScope::QuantumRegister*> qubits;
+        llvm::SmallVector<mlir::Value*> classical;
+    };
+
+    ControlFlowState captureControlFlowState();
+
+    llvm::SmallVector<mlir::Value>
+    readControlFlowState(const ControlFlowState &state, mlir::Location loc);
+
+    void writeControlFlowState(
+        const ControlFlowState &state,
+        mlir::ValueRange values);
+
     struct RegisterSelection {
         enum class Kind { WholeRegister, Index, Range };
         Kind kind;

@@ -9,6 +9,7 @@ include(doctest)
 
 add_executable(quantum-mlir-tests
   QuantumOpsTest.cpp
+  RegisterRangesTest.cpp
   main.cpp
 )
 

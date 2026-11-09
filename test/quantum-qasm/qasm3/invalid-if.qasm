@@ -86,5 +86,5 @@ if (true) {
 OPENQASM 3.0;
 if (true) {
     // expected-error @+1 {{unsupported control-flow statement}}
-    while (true) {}
+    for int i in [0:1] {}
 }

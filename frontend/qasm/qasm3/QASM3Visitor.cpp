@@ -1391,16 +1391,10 @@ std::any QASM3Visitor::visitScope(qasm3Parser::ScopeContext* ctx)
     return visitChildren(ctx);
 }
 
-std::any QASM3Visitor::visitIfStatement(qasm3Parser::IfStatementContext* ctx)
+QASM3Visitor::ControlFlowState QASM3Visitor::captureControlFlowState()
 {
-    auto condition = emitCondition(ctx->expression());
-    if (mlir::failed(condition)) return {};
-    const auto loc = getLocation(ctx);
-
-    // Use whole registers at control-flow boundaries so branches may split
-    // different slices without changing the types of the merged state.
-    auto qubits = scope.getVisibleQRegs();
-    llvm::SmallVector<mlir::Value*> classical;
+    ControlFlowState state;
+    state.qubits = scope.getVisibleQRegs();
     for (auto position = scope.getPosition(); position.scope;
          position = position.scope->getEnclosingPosition()) {
         for (auto* declaration = position.declaration; declaration;
@@ -1408,32 +1402,52 @@ std::any QASM3Visitor::visitIfStatement(qasm3Parser::IfStatementContext* ctx)
             if (scope.lookup(declaration->name) != declaration) continue;
             if (auto* variable =
                     std::get_if<QASMScope::Variable>(&declaration->payload))
-                classical.push_back(&variable->value);
+                state.classical.push_back(&variable->value);
             else if (
                 auto* reg = std::get_if<QASMScope::ClassicalRegister*>(
                     &declaration->payload))
-                classical.push_back(&(*reg)->value);
+                state.classical.push_back(&(*reg)->value);
         }
     }
 
-    auto readState = [&] {
-        llvm::SmallVector<mlir::Value> values;
-        for (auto* reg : qubits)
-            values.push_back(
-                scope.materializeRegister(*reg, {0, reg->size, 1}, builder, loc)
-                    .value);
-        for (auto* value : classical) values.push_back(*value);
-        return values;
-    };
-    auto writeState = [&](mlir::ValueRange values) {
-        for (auto [reg, value] :
-             llvm::zip_equal(qubits, values.take_front(qubits.size())))
-            reg->updateWholeRegister(value);
-        for (auto [slot, value] :
-             llvm::zip_equal(classical, values.drop_front(qubits.size())))
-            *slot = value;
-    };
-    const auto incoming = readState();
+    return state;
+}
+
+llvm::SmallVector<mlir::Value> QASM3Visitor::readControlFlowState(
+    const ControlFlowState &state,
+    mlir::Location loc)
+{
+    // Use whole registers at control-flow boundaries so branches and loop
+    // iterations may split different slices without changing the state types.
+    llvm::SmallVector<mlir::Value> values;
+    for (auto* reg : state.qubits)
+        values.push_back(
+            scope.materializeRegister(*reg, {0, reg->size, 1}, builder, loc)
+                .value);
+    for (auto* value : state.classical) values.push_back(*value);
+    return values;
+}
+
+void QASM3Visitor::writeControlFlowState(
+    const ControlFlowState &state,
+    mlir::ValueRange values)
+{
+    for (auto [reg, value] :
+         llvm::zip_equal(state.qubits, values.take_front(state.qubits.size())))
+        reg->updateWholeRegister(value);
+    for (auto [slot, value] : llvm::zip_equal(
+             state.classical,
+             values.drop_front(state.qubits.size())))
+        *slot = value;
+}
+
+std::any QASM3Visitor::visitIfStatement(qasm3Parser::IfStatementContext* ctx)
+{
+    auto condition = emitCondition(ctx->expression());
+    if (mlir::failed(condition)) return {};
+    const auto loc = getLocation(ctx);
+    auto state = captureControlFlowState();
+    const auto incoming = readControlFlowState(state, loc);
     llvm::SmallVector<mlir::Type> types;
     for (auto value : incoming) types.push_back(value.getType());
 
@@ -1447,11 +1461,11 @@ std::any QASM3Visitor::visitIfStatement(qasm3Parser::IfStatementContext* ctx)
     auto &enclosingScope = scope.getCurrentScope();
     llvm::scope_exit scopeGuard([&] {
         scope.setCurrentScope(enclosingScope);
-        if (failed()) writeState(incoming);
+        if (failed()) writeControlFlowState(state, incoming);
     });
     auto emitBranch = [&](mlir::Block &block,
                           qasm3Parser::StatementOrScopeContext* body) {
-        writeState(incoming);
+        writeControlFlowState(state, incoming);
         scope.setCurrentScope(enclosingScope);
         // Single-statement bodies need the same lexical isolation as blocks.
         scope.enterScope(QASMScope::LexicalScope::Kind::Block);
@@ -1459,14 +1473,63 @@ std::any QASM3Visitor::visitIfStatement(qasm3Parser::IfStatementContext* ctx)
         builder.setInsertionPointToEnd(&block);
         if (body) body->accept(this);
         if (failed()) return;
-        auto values = readState();
+        auto values = readControlFlowState(state, loc);
         mlir::scf::YieldOp::create(builder, loc, values);
     };
     emitBranch(ifOp.getThenRegion().front(), ctx->if_body);
     if (failed()) return {};
     emitBranch(ifOp.getElseRegion().front(), ctx->else_body);
     if (failed()) return {};
-    writeState(ifOp.getResults());
+    writeControlFlowState(state, ifOp.getResults());
+    return {};
+}
+
+std::any
+QASM3Visitor::visitWhileStatement(qasm3Parser::WhileStatementContext* ctx)
+{
+    const auto loc = getLocation(ctx);
+    auto state = captureControlFlowState();
+    const auto incoming = readControlFlowState(state, loc);
+    llvm::SmallVector<mlir::Type> types;
+    for (auto value : incoming) types.push_back(value.getType());
+
+    mlir::OpBuilder::InsertionGuard insertionGuard(builder);
+    auto whileOp = mlir::scf::WhileOp::create(builder, loc, types, incoming);
+    auto &before = whileOp.getBefore().emplaceBlock();
+    auto &after = whileOp.getAfter().emplaceBlock();
+    for (auto type : types) {
+        before.addArgument(type, loc);
+        after.addArgument(type, loc);
+    }
+
+    auto &enclosingScope = scope.getCurrentScope();
+    llvm::scope_exit scopeGuard([&] {
+        scope.setCurrentScope(enclosingScope);
+        if (failed()) writeControlFlowState(state, incoming);
+    });
+
+    // Evaluate the condition inside the loop using the current iteration's
+    // bindings. On a false condition these same values become the results,
+    // including the incoming state when the body never executes.
+    builder.setInsertionPointToEnd(&before);
+    writeControlFlowState(state, before.getArguments());
+    auto condition = emitCondition(ctx->expression());
+    if (mlir::failed(condition)) return {};
+    mlir::scf::ConditionOp::create(
+        builder,
+        loc,
+        *condition,
+        before.getArguments());
+
+    builder.setInsertionPointToEnd(&after);
+    writeControlFlowState(state, after.getArguments());
+    // Single-statement bodies also need an iteration-local declaration scope.
+    scope.enterScope(QASMScope::LexicalScope::Kind::Block);
+    ctx->body->accept(this);
+    if (failed()) return {};
+    auto updated = readControlFlowState(state, loc);
+    mlir::scf::YieldOp::create(builder, loc, updated);
+    writeControlFlowState(state, whileOp.getResults());
     return {};
 }
 
@@ -1747,12 +1810,12 @@ std::any QASM3Visitor::visitConstDeclarationStatement(
 std::any QASM3Visitor::visitStatement(qasm3Parser::StatementContext* ctx)
 {
     if (failed()) return {};
-    // TODO: Lower loops and switch, then add early exits when SCF supports
+    // TODO: Lower for and switch, then add early exits when SCF supports
     // them. Default traversal would otherwise emit bodies unconditionally or
     // ignore transfers, including those nested in a supported conditional.
-    if (ctx->forStatement() || ctx->whileStatement() || ctx->switchStatement()
-        || ctx->breakStatement() || ctx->continueStatement()
-        || ctx->returnStatement() || ctx->endStatement()) {
+    if (ctx->forStatement() || ctx->switchStatement() || ctx->breakStatement()
+        || ctx->continueStatement() || ctx->returnStatement()
+        || ctx->endStatement()) {
         error(ctx, "unsupported control-flow statement");
         return {};
     }
