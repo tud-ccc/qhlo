@@ -260,3 +260,53 @@ gate g(q) q {}
 qubit[2] q;
 // expected-error @+1 {{redefinition of 'q'}}
 g(1) q[0];
+
+// -----
+
+OPENQASM 3.0;
+// expected-error @+1 {{expected numeric constants in arithmetic expression}}
+const int value = true + 1;
+
+// -----
+
+OPENQASM 3.0;
+// expected-error @+1 {{expected a numeric constant for unary minus}}
+const int value = -false;
+
+// -----
+
+OPENQASM 3.0;
+// expected-error @+1 {{remainder requires integer constants}}
+const float value = 3.0 % 2;
+
+// -----
+
+OPENQASM 3.0;
+float runtime = 1.0;
+// An SSA value initialized by a constant is not a language-level const.
+// expected-error @+1 {{expected a compile-time constant}}
+const float value = runtime + 1;
+
+// -----
+
+OPENQASM 3.0;
+// expected-error @+1 {{unsupported constant expression}}
+const int value = 1 << 2;
+
+// -----
+
+OPENQASM 3.0;
+// expected-error @+1 {{constant integer expression overflows int64}}
+const int value = -(-9223372036854775807 - 1);
+
+// -----
+
+OPENQASM 3.0;
+// expected-error @+1 {{constant integer expression overflows int64}}
+const int value = (-9223372036854775807 - 1) / -1;
+
+// -----
+
+OPENQASM 3.0;
+// expected-error @+1 {{expected a constant integer expression}}
+int[2.0 + 2] value = 1;

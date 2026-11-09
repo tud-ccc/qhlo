@@ -142,3 +142,11 @@ qubit[4] q;
 bit[4] c;
 // expected-error @+1 {{division by zero in constant integer expression}}
 measure q[(1 / 0):3] -> c;
+
+// -----
+
+// Folding to a floating-point value must not make an expression a valid index.
+OPENQASM 3.0;
+qubit[4] q;
+// expected-error @+1 {{expected a constant integer expression}}
+h q[pi / 2];

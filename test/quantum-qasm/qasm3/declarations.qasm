@@ -139,3 +139,48 @@ bit[((2))] cs;
 // CHECK: !quantum.qubit<2>
 // CHECK: tensor<1xi1>
 // CHECK: tensor<2xi1>
+
+// -----
+
+// Numeric constant expressions are folded before IR emission.
+OPENQASM 3.0;
+const float half = pi / 2;
+gate foldedPhase a { rz((pi + π) / 4) a; }
+float sum = 1.5 + 2;
+float difference = 5 - 1.5;
+float product = (1 + 2.0) * 4;
+// The destination type must not change integer division into float division.
+float integerDivision = 5 / 2;
+float floatDivision = 5 / 2.0;
+const int[8] negative = -2;
+float signedPromotion = 1.0 + negative;
+float nested = 2 / (1 + 3.0);
+float unary = -(pi / 2);
+const int index = (7 + 5) * 2 / 3 % 5;
+qubit[4] q;
+h q[index];
+foldedPhase q[0];
+cp(half) q[0], q[1];
+cp(pi / 4) q[0], q[1];
+cp(pi / 8) q[0], q[1];
+
+// CHECK-LABEL: module {
+// CHECK: sym_name = "foldedPhase"
+// CHECK: %[[GATE_PHASE:.*]] = arith.constant 1.5707963267948966 : f64
+// CHECK: "quantum.Rz"(%{{.*}}, %[[GATE_PHASE]])
+// CHECK: "qpu.circuit"
+// CHECK: arith.constant 3.500000e+00 : f64
+// CHECK: arith.constant 3.500000e+00 : f64
+// CHECK: arith.constant 1.200000e+01 : f64
+// CHECK: arith.constant 2.000000e+00 : f64
+// CHECK: arith.constant 2.500000e+00 : f64
+// CHECK: arith.constant -1.000000e+00 : f64
+// CHECK: arith.constant 5.000000e-01 : f64
+// CHECK: arith.constant -1.5707963267948966 : f64
+// CHECK: callee = @foldedPhase
+// CHECK: %[[HALF:.*]] = arith.constant 1.5707963267948966 : f64
+// CHECK: "quantum.CU1"(%{{.*}}, %{{.*}}, %[[HALF]])
+// CHECK: %[[QUARTER:.*]] = arith.constant 0.78539816339744828 : f64
+// CHECK: "quantum.CU1"(%{{.*}}, %{{.*}}, %[[QUARTER]])
+// CHECK: %[[EIGHTH:.*]] = arith.constant 0.39269908169872414 : f64
+// CHECK: "quantum.CU1"(%{{.*}}, %{{.*}}, %[[EIGHTH]])
