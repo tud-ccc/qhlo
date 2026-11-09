@@ -310,3 +310,24 @@ const int value = (-9223372036854775807 - 1) / -1;
 OPENQASM 3.0;
 // expected-error @+1 {{expected a constant integer expression}}
 int[2.0 + 2] value = 1;
+
+// -----
+
+OPENQASM 3.0;
+bool flag = true;
+// expected-error @+1 {{expected numeric operands in arithmetic expression}}
+float value = flag + 1;
+
+// -----
+
+OPENQASM 3.0;
+float real = 1.0;
+// expected-error @+1 {{remainder requires integer operands}}
+float value = real % 2;
+
+// -----
+
+OPENQASM 3.0;
+bool flag = true;
+// expected-error @+1 {{expected a numeric operand for unary minus}}
+bool value = -flag;

@@ -262,6 +262,40 @@ mlir::FailureOr<llvm::SmallVector<mlir::Value>> emitControlledGate(
         control.getResults().end());
 }
 
+// Keep language-level constant checking independent of SSA folding. A mutable
+// variable can hold a constant SSA value without being a constant declaration.
+bool isConstantExpression(
+    qasm3Parser::ExpressionContext* expression,
+    QASMScope &scope)
+{
+    if (auto* literal =
+            dynamic_cast<qasm3Parser::LiteralExpressionContext*>(expression)) {
+        if (auto* identifier = literal->Identifier()) {
+            auto* declaration = scope.lookup(identifier->getText());
+            return declaration
+                   && std::holds_alternative<QASMScope::Constant>(
+                       declaration->payload);
+        }
+        return true;
+    }
+    if (auto* parens = dynamic_cast<qasm3Parser::ParenthesisExpressionContext*>(
+            expression))
+        return isConstantExpression(parens->expression(), scope);
+    if (auto* unary =
+            dynamic_cast<qasm3Parser::UnaryExpressionContext*>(expression))
+        return isConstantExpression(unary->expression(), scope);
+    if (auto* binary =
+            dynamic_cast<qasm3Parser::AdditiveExpressionContext*>(expression))
+        return isConstantExpression(binary->expression(0), scope)
+               && isConstantExpression(binary->expression(1), scope);
+    if (auto* binary =
+            dynamic_cast<qasm3Parser::MultiplicativeExpressionContext*>(
+                expression))
+        return isConstantExpression(binary->expression(0), scope)
+               && isConstantExpression(binary->expression(1), scope);
+    return false;
+}
+
 llvm::FailureOr<mlir::Type>
 getMlirType(mlir::MLIRContext &context, qasm3Parser::ScalarTypeContext* type)
 {
@@ -529,32 +563,120 @@ mlir::FailureOr<mlir::Value> QASM3Visitor::emitRValue(
     return mlir::failure();
 }
 
+mlir::FailureOr<mlir::Value> QASM3Visitor::convertValue(
+    mlir::Value value,
+    mlir::Type type,
+    antlr4::ParserRuleContext* ctx)
+{
+    if (!type || value.getType() == type) return value;
+    const auto loc = getLocation(ctx);
+    if (auto integer = mlir::dyn_cast<mlir::IntegerType>(value.getType());
+        integer && integer.getWidth() > 1) {
+        if (auto target = mlir::dyn_cast<mlir::IntegerType>(type);
+            target && target.getWidth() > integer.getWidth())
+            return builder.createOrFold<mlir::arith::ExtSIOp>(loc, type, value);
+        if (mlir::isa<mlir::FloatType>(type))
+            return builder.createOrFold<mlir::arith::SIToFPOp>(
+                loc,
+                type,
+                value);
+    }
+    if (auto real = mlir::dyn_cast<mlir::FloatType>(value.getType())) {
+        if (auto target = mlir::dyn_cast<mlir::FloatType>(type);
+            target && target.getWidth() > real.getWidth())
+            return builder.createOrFold<mlir::arith::ExtFOp>(loc, type, value);
+    }
+    error(ctx, "expression type does not match the expected type");
+    return mlir::failure();
+}
+
+mlir::FailureOr<mlir::Value> QASM3Visitor::emitBinaryExpression(
+    qasm3Parser::ExpressionContext* expression,
+    size_t op,
+    qasm3Parser::ExpressionContext* lhs,
+    qasm3Parser::ExpressionContext* rhs)
+{
+    auto left = emitExpression(lhs);
+    if (mlir::failed(left)) return mlir::failure();
+    auto right = emitExpression(rhs);
+    if (mlir::failed(right)) return mlir::failure();
+    auto isNumeric = [](mlir::Type type) {
+        return mlir::isa<mlir::FloatType>(type)
+               || (mlir::isa<mlir::IntegerType>(type) && !type.isInteger(1));
+    };
+    if (!isNumeric(left->getType()) || !isNumeric(right->getType())) {
+        error(expression, "expected numeric operands in arithmetic expression");
+        return mlir::failure();
+    }
+    const bool floating = mlir::isa<mlir::FloatType>(left->getType())
+                          || mlir::isa<mlir::FloatType>(right->getType());
+    if (floating && op == qasm3Parser::PERCENT) {
+        error(expression, "remainder requires integer operands");
+        return mlir::failure();
+    }
+    mlir::Type type;
+    if (floating) {
+        // Integer widths do not select the precision of a floating operand.
+        auto leftFloat = mlir::dyn_cast<mlir::FloatType>(left->getType());
+        auto rightFloat = mlir::dyn_cast<mlir::FloatType>(right->getType());
+        type = !rightFloat
+                       || (leftFloat
+                           && leftFloat.getWidth() >= rightFloat.getWidth())
+                   ? left->getType()
+                   : right->getType();
+    } else {
+        type = left->getType().getIntOrFloatBitWidth()
+                       >= right->getType().getIntOrFloatBitWidth()
+                   ? left->getType()
+                   : right->getType();
+    }
+    left = convertValue(*left, type, lhs);
+    if (mlir::failed(left)) return mlir::failure();
+    right = convertValue(*right, type, rhs);
+    if (mlir::failed(right)) return mlir::failure();
+    const auto loc = getLocation(expression);
+    switch (op) {
+    case qasm3Parser::PLUS:
+        if (floating)
+            return builder.createOrFold<mlir::arith::AddFOp>(
+                loc,
+                *left,
+                *right);
+        return builder.createOrFold<mlir::arith::AddIOp>(loc, *left, *right);
+    case qasm3Parser::MINUS:
+        if (floating)
+            return builder.createOrFold<mlir::arith::SubFOp>(
+                loc,
+                *left,
+                *right);
+        return builder.createOrFold<mlir::arith::SubIOp>(loc, *left, *right);
+    case qasm3Parser::ASTERISK:
+        if (floating)
+            return builder.createOrFold<mlir::arith::MulFOp>(
+                loc,
+                *left,
+                *right);
+        return builder.createOrFold<mlir::arith::MulIOp>(loc, *left, *right);
+    case qasm3Parser::SLASH:
+        if (floating)
+            return builder.createOrFold<mlir::arith::DivFOp>(
+                loc,
+                *left,
+                *right);
+        return builder.createOrFold<mlir::arith::DivSIOp>(loc, *left, *right);
+    case qasm3Parser::PERCENT:
+        return builder.createOrFold<mlir::arith::RemSIOp>(loc, *left, *right);
+    default: llvm_unreachable("unsupported binary arithmetic operator");
+    }
+}
+
 mlir::FailureOr<mlir::Value> QASM3Visitor::emitExpression(
     qasm3Parser::ExpressionContext* expression,
     mlir::Type expectedType)
 {
-    if (auto* parens = dynamic_cast<qasm3Parser::ParenthesisExpressionContext*>(
-            expression))
-        return emitExpression(parens->expression(), expectedType);
-    if (auto* literal =
-            dynamic_cast<qasm3Parser::LiteralExpressionContext*>(expression)) {
-        if (auto* identifier = literal->Identifier()) {
-            auto declaration =
-                resolveIdentifier(identifier->getText(), expression);
-            if (mlir::failed(declaration)) return mlir::failure();
-            if (!std::holds_alternative<QASMScope::Constant>(
-                    (*declaration)->payload)) {
-                auto value = emitRValue(**declaration, expression);
-                if (mlir::failed(value)) return mlir::failure();
-                if (expectedType && value->getType() != expectedType) {
-                    error(
-                        expression,
-                        "expression type does not match the expected type");
-                    return mlir::failure();
-                }
-                return *value;
-            }
-        }
+    if (isConstantExpression(expression, scope)) {
+        // Preserve checked constant arithmetic, including integer overflow and
+        // division diagnostics, before materializing its result.
         auto constant = evaluateConstant(expression);
         if (mlir::failed(constant)) return mlir::failure();
         if (expectedType) {
@@ -567,20 +689,65 @@ mlir::FailureOr<mlir::Value> QASM3Visitor::emitExpression(
                    *constant)
             .getResult();
     }
-    // Constant expressions use the same checked evaluator as register indices.
-    // Runtime arithmetic is lowered separately once its operators are
-    // supported.
-    auto constant = evaluateConstant(expression);
-    if (mlir::failed(constant)) return mlir::failure();
-    if (expectedType) {
-        constant = convertConstant(*constant, expectedType, expression);
-        if (mlir::failed(constant)) return mlir::failure();
+    if (auto* parens = dynamic_cast<qasm3Parser::ParenthesisExpressionContext*>(
+            expression))
+        return emitExpression(parens->expression(), expectedType);
+    mlir::FailureOr<mlir::Value> value = mlir::failure();
+    if (auto* literal =
+            dynamic_cast<qasm3Parser::LiteralExpressionContext*>(expression)) {
+        if (auto* identifier = literal->Identifier()) {
+            auto declaration =
+                resolveIdentifier(identifier->getText(), expression);
+            if (mlir::failed(declaration)) return mlir::failure();
+            value = emitRValue(**declaration, expression);
+        }
+    } else if (
+        auto* unary =
+            dynamic_cast<qasm3Parser::UnaryExpressionContext*>(expression);
+        unary && unary->op->getType() == qasm3Parser::MINUS) {
+        auto operand = emitExpression(unary->expression());
+        if (mlir::failed(operand)) return mlir::failure();
+        const auto loc = getLocation(expression);
+        if (mlir::isa<mlir::FloatType>(operand->getType()))
+            value = builder.createOrFold<mlir::arith::NegFOp>(loc, *operand);
+        else if (
+            auto type = mlir::dyn_cast<mlir::IntegerType>(operand->getType());
+            type && type.getWidth() > 1) {
+            auto zero = mlir::arith::ConstantOp::create(
+                builder,
+                loc,
+                builder.getIntegerAttr(type, 0));
+            value = builder.createOrFold<mlir::arith::SubIOp>(
+                loc,
+                zero.getResult(),
+                *operand);
+        } else {
+            error(expression, "expected a numeric operand for unary minus");
+            return mlir::failure();
+        }
+    } else if (
+        auto* binary =
+            dynamic_cast<qasm3Parser::AdditiveExpressionContext*>(expression)) {
+        value = emitBinaryExpression(
+            expression,
+            binary->op->getType(),
+            binary->expression(0),
+            binary->expression(1));
+    } else if (
+        auto* binary =
+            dynamic_cast<qasm3Parser::MultiplicativeExpressionContext*>(
+                expression)) {
+        value = emitBinaryExpression(
+            expression,
+            binary->op->getType(),
+            binary->expression(0),
+            binary->expression(1));
+    } else {
+        error(expression, "unsupported arithmetic expression");
+        return mlir::failure();
     }
-    return mlir::arith::ConstantOp::create(
-               builder,
-               getLocation(expression),
-               *constant)
-        .getResult();
+    if (mlir::failed(value)) return mlir::failure();
+    return convertValue(*value, expectedType, expression);
 }
 
 mlir::LogicalResult QASM3Visitor::assign(

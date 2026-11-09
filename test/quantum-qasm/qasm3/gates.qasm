@@ -151,3 +151,71 @@ controlledPhase(0.5) q[0], q[1];
 // CHECK: sym_name = "userPhase"
 // CHECK: "qpu.circuit"
 // CHECK: callee = @controlledPhase
+
+// -----
+
+// The upstream fragment needs a register; its parameter arithmetic is runtime.
+OPENQASM 3.0;
+qubit[2] q;
+include "official/Inputs/cphase.qasm";
+
+// CHECK-LABEL: module {
+// CHECK: sym_name = "cphase"
+// CHECK: ^bb0(%[[A:[^:]+]]: !quantum.qubit<1>, %[[B:[^:]+]]: !quantum.qubit<1>, %[[THETA:[^:]+]]: f64):
+// CHECK: %[[TWO:.*]] = arith.constant 2.000000e+00 : f64
+// CHECK: %[[HALF:.*]] = arith.divf %[[THETA]], %[[TWO]] : f64
+// CHECK: %[[U0:.*]] = "quantum.U3"(%[[A]], %{{.*}}, %{{.*}}, %[[HALF]])
+// CHECK: %[[C0:.*]], %[[T0:.*]] = "quantum.CNOT"(%[[U0]], %[[B]])
+// CHECK: %[[NEG:.*]] = arith.negf %[[THETA]] : f64
+// CHECK: %[[NEG_HALF:.*]] = arith.divf %[[NEG]], %{{.*}} : f64
+// CHECK: %[[U1:.*]] = "quantum.U3"(%[[T0]], %{{.*}}, %{{.*}}, %[[NEG_HALF]])
+// CHECK: %[[C1:.*]], %[[T1:.*]] = "quantum.CNOT"(%[[C0]], %[[U1]])
+// CHECK: %[[HALF2:.*]] = arith.divf %[[THETA]], %{{.*}} : f64
+// CHECK: %[[U2:.*]] = "quantum.U3"(%[[T1]], %{{.*}}, %{{.*}}, %[[HALF2]])
+// CHECK: "quantum.return"(%[[C1]], %[[U2]])
+// CHECK: "qpu.circuit"
+// CHECK: "quantum.call"(%{{.*}}, %{{.*}}, %{{.*}}) <{callee = @cphase}>
+
+// -----
+
+// Promote operands before arithmetic; the destination type cannot change 5 / 2.
+OPENQASM 3.0;
+gate arithmetic(theta) q {
+    p((theta + 1) * (2 - theta) / 4) q;
+    p(5 / 2 + theta) q;
+}
+int[8] small = -3;
+int wide = 5;
+float real = 1.5;
+qubit q;
+arithmetic(real + small * wide) q;
+p(wide / 2) q;
+p(wide % 2) q;
+p(-small) q;
+p(wide - small) q;
+
+// CHECK-LABEL: module {
+// CHECK: sym_name = "arithmetic"
+// CHECK: ^bb0(%{{[^:]+}}: !quantum.qubit<1>, %[[THETA:[^:]+]]: f64):
+// CHECK: %[[ONE:.*]] = arith.constant 1.000000e+00 : f64
+// CHECK: %[[ADD:.*]] = arith.addf %[[THETA]], %[[ONE]] : f64
+// CHECK: %[[TWO:.*]] = arith.constant 2.000000e+00 : f64
+// CHECK: %[[SUB:.*]] = arith.subf %[[TWO]], %[[THETA]] : f64
+// CHECK: %[[MUL:.*]] = arith.mulf %[[ADD]], %[[SUB]] : f64
+// CHECK: %[[FOUR:.*]] = arith.constant 4.000000e+00 : f64
+// CHECK: %[[DIV:.*]] = arith.divf %[[MUL]], %[[FOUR]] : f64
+// CHECK: "quantum.P"(%{{.*}}, %[[DIV]])
+// CHECK: %[[INTEGER_HALF:.*]] = arith.constant 2.000000e+00 : f64
+// CHECK: %[[MIXED:.*]] = arith.addf %[[THETA]], %[[INTEGER_HALF]] : f64
+// CHECK: "quantum.P"(%{{.*}}, %[[MIXED]])
+// CHECK: "qpu.circuit"
+// CHECK: %[[FOLDED:.*]] = arith.constant -1.350000e+01 : f64
+// CHECK: "quantum.call"(%{{.*}}, %[[FOLDED]]) <{callee = @arithmetic}>
+// CHECK: %[[DIVIDED:.*]] = arith.constant 2.000000e+00 : f64
+// CHECK: "quantum.P"(%{{.*}}, %[[DIVIDED]])
+// CHECK: %[[REMAINDER:.*]] = arith.constant 1.000000e+00 : f64
+// CHECK: "quantum.P"(%{{.*}}, %[[REMAINDER]])
+// CHECK: %[[NEGATED:.*]] = arith.constant 3.000000e+00 : f64
+// CHECK: "quantum.P"(%{{.*}}, %[[NEGATED]])
+// CHECK: %[[DIFFERENCE:.*]] = arith.constant 8.000000e+00 : f64
+// CHECK: "quantum.P"(%{{.*}}, %[[DIFFERENCE]])

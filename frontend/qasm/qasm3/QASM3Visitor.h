@@ -126,6 +126,17 @@ private:
         qasm3Parser::ExpressionContext* expression,
         mlir::Type expectedType = {});
 
+    mlir::FailureOr<mlir::Value> convertValue(
+        mlir::Value value,
+        mlir::Type type,
+        antlr4::ParserRuleContext* ctx);
+
+    mlir::FailureOr<mlir::Value> emitBinaryExpression(
+        qasm3Parser::ExpressionContext* expression,
+        size_t op,
+        qasm3Parser::ExpressionContext* lhs,
+        qasm3Parser::ExpressionContext* rhs);
+
     mlir::LogicalResult assign(
         QASMScope::Declaration &declaration,
         mlir::Value value,
