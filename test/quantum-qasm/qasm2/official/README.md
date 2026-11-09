@@ -29,8 +29,11 @@ The `.mlir` lit wrappers are local additions; no upstream source was modified.
 | `teleportv2.qasm` | Teleportation with a single multi-bit classical register |
 
 Run with `check-quantum-mlir-frontend`. Lit excludes `Inputs/` from discovery;
-each wrapper invokes `quantum-qasm` on one original input and checks representative
-MLIR structure with FileCheck. These tests expect successful frontend compilation,
+each wrapper invokes `quantum-qasm` on one original input and checks the full operation sequence and SSA connections with FileCheck.
+Checks cover gate bodies and calls, parameter arithmetic, register splits,
+barriers, measurement destinations, conditional branches, cleanup and host
+execution. SSA names are captured rather than tied to printer numbering;
+independent deallocations use unordered checks. These tests expect successful frontend compilation,
 not simulation or exhaustive semantic-equivalence tests. Includes of `qelib1.inc`
 use the frontend's embedded library, as in the other QASM2 frontend tests.
 

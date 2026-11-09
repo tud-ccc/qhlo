@@ -14,7 +14,9 @@
 #include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
 
 #include <any>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringRef.h>
+#include <llvm/Support/LogicalResult.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/Value.h>
@@ -22,9 +24,6 @@
 #include <string>
 
 namespace quantum::frontend::qasm2 {
-
-using qasm2::qasm2Parser;
-using qasm2::qasm2ParserBaseVisitor;
 
 struct QuantumOperand {
     QASMScope::QuantumRegister* reg;
@@ -78,6 +77,16 @@ public:
     std::any visitIfStatement(qasm2Parser::IfStatementContext* ctx) override;
 
 private:
+    mlir::LogicalResult
+    ensureGateDefinition(GateDefinition &gate, mlir::Location loc);
+
+    mlir::Value getOrInitializeClassicalRegister(
+        QASMScope::ClassicalRegister &reg,
+        mlir::Location loc);
+
+    mlir::FailureOr<llvm::SmallVector<QuantumOperand>>
+    prepareConditionalQubits(qasm2Parser::QuantumOperationContext* operation);
+
     mlir::Location getLocation(antlr4::ParserRuleContext* ctx) const;
 
     std::optional<unsigned> parseUnsigned(
@@ -89,7 +98,6 @@ private:
     std::optional<QuantumOperand>
     resolveQuantumOperand(qasm2Parser::GateOperandContext* ctx);
 
-    mlir::Value resolveExpression(qasm2Parser::ExpressionContext* ctx);
     mlir::Value resolveClassicExpression(qasm2Parser::ExpressionContext* ctx);
 
     mlir::MLIRContext &context;
@@ -103,7 +111,7 @@ private:
     QASMScope &scope;
     GateLibrary &gateLibrary;
     QASMIncludeResolver &includeResolver;
-    qasm2::QASM2TranslationUnit &translationUnit;
+    QASM2TranslationUnit &translationUnit;
 
     bool hadError = false;
 };

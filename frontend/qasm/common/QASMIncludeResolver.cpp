@@ -54,6 +54,10 @@ llvm::Expected<ResolvedInclude> QASMIncludeResolver::resolve(
     if (auto it = builtins.find(includeName); it != builtins.end())
         return it->second;
 
+    // Absolute paths must not be appended to the including directory.
+    if (llvm::sys::path::is_absolute(includeName))
+        return readIncludeFile(includeName);
+
     // 2. Resolve relative to the including file.
     //
     // Ignore synthetic filenames such as "<qelib1.inc>".

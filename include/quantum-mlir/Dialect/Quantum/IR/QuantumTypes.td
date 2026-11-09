@@ -10,6 +10,7 @@
 include "quantum-mlir/Dialect/Quantum/IR/QuantumAttributes.td"
 include "mlir/IR/EnumAttr.td"
 include "mlir/IR/BuiltinTypeInterfaces.td"
+include "quantum-mlir/Dialect/QPU/Interfaces/MeasurementSourceInterface.td"
 
 def Quantum_QubitType : Quantum_Type<"Qubit"> {
   let mnemonic = "qubit";
@@ -37,7 +38,12 @@ class QubitArrayOfSize<int N>
 
 def Quantum_SingleQubitType : QubitArrayOfSize<1>;
 
-def Quantum_MeasurementType : Quantum_Type<"Measurement"> {
+def Quantum_MeasurementType : Quantum_Type<"Measurement", [
+  QPU_MeasurementSourceInterface
+]> {
+  let extraClassDeclaration = [{
+    bool isMutable() const { return false; }
+  }];
   let mnemonic = "measurement";
   let summary = "Multi-dimensional measure type";
   let parameters = (ins "int64_t":$size);

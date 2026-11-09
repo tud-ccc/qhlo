@@ -10,6 +10,7 @@
 #include "quantum-mlir/Dialect/QPU/IR/QPUBase.h"
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumBase.h"
 
+#include <llvm/ADT/StringExtras.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
@@ -22,29 +23,40 @@ enum class QASMVersion { QASM2, QASM3, Unknown };
 
 QASMVersion detectQASMVersion(llvm::StringRef source)
 {
-    while (true) {
+    source = source.ltrim();
+    while (source.starts_with("//") || source.starts_with("/*")) {
+        if (source.consume_front("//")) {
+            const auto end = source.find_first_of("\r\n");
+            if (end == llvm::StringRef::npos) return QASMVersion::QASM3;
+            source = source.drop_front(end);
+        } else {
+            const auto end = source.find("*/", 2);
+            if (end == llvm::StringRef::npos) return QASMVersion::Unknown;
+            source = source.drop_front(end + 2);
+        }
         source = source.ltrim();
-
-        if (!source.starts_with("//")) break;
-
-        const auto end = source.find('\n');
-        if (end == llvm::StringRef::npos) return QASMVersion::Unknown;
-
-        source = source.drop_front(end + 1);
     }
 
-    if (!source.consume_front("OPENQASM")) return QASMVersion::Unknown;
-
-    source = source.ltrim();
+    // An absent declaration selects QASM3. Its parser checks that any version
+    // declaration occurs before all other statements.
+    if (!source.consume_front("OPENQASM")) return QASMVersion::QASM3;
+    if (!source.empty()
+        && (llvm::isAlnum(source.front()) || source.front() == '_'))
+        return QASMVersion::QASM3;
 
     const auto semicolon = source.find(';');
     if (semicolon == llvm::StringRef::npos) return QASMVersion::Unknown;
 
     const llvm::StringRef version = source.take_front(semicolon).trim();
-
     if (version == "2.0") return QASMVersion::QASM2;
+    if (version == "3") return QASMVersion::QASM3;
 
-    if (version.starts_with("3.")) return QASMVersion::QASM3;
+    if (version.starts_with("3.")) {
+        const auto minor = version.drop_front(2);
+        if (!minor.empty()
+            && minor.find_first_not_of("0123456789") == llvm::StringRef::npos)
+            return QASMVersion::QASM3;
+    }
 
     return QASMVersion::Unknown;
 }
@@ -69,11 +81,12 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM(
     case QASMVersion::QASM2:
         return qasm2::parseQASM2(source, filename, context);
 
-    case QASMVersion::QASM3: return parseQASM3(source, filename, context);
+    case QASMVersion::QASM3:
+        return qasm3::parseQASM3(source, filename, context);
 
     case QASMVersion::Unknown:
         mlir::emitError(mlir::FileLineColLoc::get(&context, filename, 1, 1))
-            << "expected 'OPENQASM 2.0;' or 'OPENQASM 3.x;'";
+            << "expected 'OPENQASM 2.0;', 'OPENQASM 3;' or 'OPENQASM 3.x;'";
         return {};
     }
 

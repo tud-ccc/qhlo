@@ -150,8 +150,8 @@ func.func @main() -> (i1) {
 
   "qillr.measure"(%q0, %r0) : (!qillr.qubit, !qillr.result) -> ()
   // CHECK-DAG: llvm.call @__quantum__qis__mz__body(%[[Q0PTR]], %[[RPTR]]) : (!llvm.ptr, !llvm.ptr) -> ()
-  %mt = "qillr.read_measurement"(%r0) : (!qillr.result) -> tensor<1xi1>
-  // CHECK-DAG: llvm.call @__quantum__qis__read_result__body(%[[RPTR]]) : (!llvm.ptr) -> tensor<1xi1>
+  %mt = "qpu.to_bits"(%r0) : (!qillr.result) -> tensor<1xi1>
+  // CHECK-DAG: llvm.call @__quantum__qis__read_result__body(%[[RPTR]]) : (!llvm.ptr) -> i1
 
   "qillr.reset"(%q0) : (!qillr.qubit) -> ()
   // CHECK-DAG: llvm.call @__quantum__qis__reset__body(%[[Q0PTR]]) : (!llvm.ptr) -> ()
@@ -159,5 +159,7 @@ func.func @main() -> (i1) {
   "qillr.deallocate"(%q0) : (!qillr.qubit) -> ()
   // CHECK-DAG: llvm.call @__quantum__rt__qubit_release(%[[Q0PTR]]) : (!llvm.ptr) -> ()
 
-  return %mt : i1
+  %idx = arith.constant 0 : index
+  %bit = tensor.extract %mt[%idx] : tensor<1xi1>
+  return %bit : i1
 }

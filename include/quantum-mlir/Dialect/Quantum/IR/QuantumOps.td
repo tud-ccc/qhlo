@@ -74,6 +74,7 @@ class AdjointTo<string op>
 // Quantum gate operations.
 //===----------------------------------------------------------------------===//
 
+// TODO: A gate is a unitary operation
 def Quantum_GateOp : Quantum_Op<
   "gate",
   [
@@ -902,6 +903,64 @@ def Quantum_BarrierOp : PrimitiveGate_Op<
 }
 
 //===----------------------------------------------------------------------===//
+// Controlled region ops.
+//===----------------------------------------------------------------------===//
+
+def Quantum_CtrlOp : PrimitiveGate_Op<
+  "ctrl",
+  [
+    Unitary,
+    SingleBlock,
+    AllTypesMatch<["input", "result"]>
+  ]> {
+  let summary = "Controlled unitary region";
+  let description = [{
+    The first `nctrls` input operands are single-qubit controls. The remaining
+    operands are targets and are passed to the region as block arguments.
+    `nctrls` defaults to one. Results have the same types and order as inputs:
+    forwarded controls followed by the updated targets from `quantum.yield`.
+    The region may capture classical values, but must access qubits through its
+    block arguments. It must contain exactly one block ending in `quantum.yield`.
+  }];
+
+  let arguments = (ins
+    Variadic<Quantum_QubitType>:$input,
+    DefaultValuedAttr<IndexAttr, "1">:$nctrls
+  );
+  let results = (outs Variadic<Quantum_QubitType>:$result);
+  let regions = (region AnyRegion:$body);
+  let builders = [
+    OpBuilder<(ins "ValueRange":$controls, "ValueRange":$targets)>
+  ];
+  let extraClassDeclaration = [{
+    ::mlir::Block &getBodyBlock() {
+      return getBody().front();
+    }
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
+def Quantum_YieldOp : Quantum_Op<
+  "yield",
+  [
+    Pure,
+    HasParent<"CtrlOp">,
+    ReturnLike,
+    Terminator,
+    NoClone
+  ]> {
+  let summary = "Yield updated targets from a controlled region";
+  let description = [{
+    Terminates a `quantum.ctrl` body. Operands must match the target result
+    types, excluding the leading control results. Controls are forwarded by
+    the enclosing operation and must not be yielded by the body.
+  }];
+  let arguments = (ins Variadic<Quantum_QubitType>:$args);
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
 // Measurement related gate operations.
 //===----------------------------------------------------------------------===//
 
@@ -926,11 +985,6 @@ def Quantum_MeasureOp : Memory_Op<
       Quantum_MeasurementType:$measurement,
       Quantum_QubitType:$result
     );
-}
-
-def Quantum_ToTensorOp : Quantum_Op<"to_tensor"> {
-  let arguments = (ins Quantum_MeasurementType:$src);
-  let results = (outs 1DTensorOf<[I1]>:$dst);
 }
 
 #endif // QUANTUM_OPS

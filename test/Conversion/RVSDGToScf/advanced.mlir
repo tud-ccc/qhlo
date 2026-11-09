@@ -11,7 +11,7 @@ func.func @test_complex() {
     %0 = "qillr.alloc"() <{size = 32 : i64}> : () -> !qillr.qubit
     %1 = "qillr.ralloc"() <{size = 32 : i64}> : () -> !qillr.result
       "qillr.measure"(%0, %1) <{inputIndex = [31], resultIndex = [31]}> : (!qillr.qubit, !qillr.result) -> ()
-      %2 = "qillr.read_measurement"(%1) <{index = []}> : (!qillr.result) -> tensor<32xi1>
+      %2 = "qpu.to_bits"(%1) : (!qillr.result) -> tensor<32xi1>
       %3 = arith.cmpi eq, %2, %cst_0 : tensor<32xi1>
       %4 = scf.parallel (%arg0) = (%c0) to (%c32) step (%c1) init (%true) -> i1 {
         %extracted = tensor.extract %3[%arg0] : tensor<32xi1>

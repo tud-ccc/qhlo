@@ -3,35 +3,6 @@
 // quantum-qasm %s | quantum-opt --inline --convert-quantum-to-qillr | FileCheck %s --check-prefixes=CHECK2
 // Stripped down from QASMBenc small/qaoa_n3.qasm
 
-// CHECK: module {
-// CHECK-NEXT: qpu.module @qasm_generated {
-// CHECK-NEXT: "qpu.circuit"() <{function_type = () -> (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>), sym_name = "main"}> ({
-// CHECK-NEXT: %[[Q:.*]] = "quantum.alloc"() : () -> !quantum.qubit<3>
-// CHECK-NEXT: %[[SPLIT0:.*]]:2 = "quantum.split"(%[[Q]]) : (!quantum.qubit<3>) -> (!quantum.qubit<1>, !quantum.qubit<2>)
-// CHECK-NEXT: %[[H0:.*]] = "quantum.H"(%[[SPLIT0]]#0) : (!quantum.qubit<1>) -> !quantum.qubit<1>
-// CHECK-NEXT: %[[SPLIT1:.*]]:2 = "quantum.split"(%[[SPLIT0]]#1) : (!quantum.qubit<2>) -> (!quantum.qubit<1>, !quantum.qubit<1>)
-// CHECK-NEXT: %[[H1:.*]] = "quantum.H"(%[[SPLIT1]]#0) : (!quantum.qubit<1>) -> !quantum.qubit<1>
-// CHECK-NEXT: %[[H2:.*]] = "quantum.H"(%[[SPLIT1]]#1) : (!quantum.qubit<1>) -> !quantum.qubit<1>
-// CHECK-NEXT: %[[MEASURE2:.*]], %[[POST2:.*]] = "quantum.measure"(%[[H2]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT: %[[TENSOR2:.*]] = "quantum.to_tensor"(%[[MEASURE2]]) : (!quantum.measurement<1>) -> tensor<1xi1>
-// CHECK-NEXT: %[[MEASURE0:.*]], %[[POST0:.*]] = "quantum.measure"(%[[H0]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT: %[[TENSOR0:.*]] = "quantum.to_tensor"(%[[MEASURE0]]) : (!quantum.measurement<1>) -> tensor<1xi1>
-// CHECK-NEXT: %[[MEASURE1:.*]], %[[POST1:.*]] = "quantum.measure"(%[[H1]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
-// CHECK-NEXT: %[[TENSOR1:.*]] = "quantum.to_tensor"(%[[MEASURE1]]) : (!quantum.measurement<1>) -> tensor<1xi1>
-// CHECK-DAG: "quantum.deallocate"(%[[POST0]]) : (!quantum.qubit<1>) -> ()
-// CHECK-DAG: "quantum.deallocate"(%[[POST1]]) : (!quantum.qubit<1>) -> ()
-// CHECK-DAG: "quantum.deallocate"(%[[POST2]]) : (!quantum.qubit<1>) -> ()
-// CHECK-NEXT: "qpu.return"(%[[TENSOR0]], %[[TENSOR1]], %[[TENSOR2]]) : (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>) -> ()
-// CHECK-NEXT: }) : () -> ()
-// CHECK-NEXT: }
-// CHECK-NEXT: func.func @qasm_main() -> (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>) {
-// CHECK-NEXT: %[[EMPTY0:.*]] = tensor.empty() : tensor<1xi1>
-// CHECK-NEXT: %[[EMPTY1:.*]] = tensor.empty() : tensor<1xi1>
-// CHECK-NEXT: %[[EMPTY2:.*]] = tensor.empty() : tensor<1xi1>
-// CHECK-NEXT: %[[EXEC:.*]]:3 = qpu.execute @qasm_generated::@main ins () outs (%[[EMPTY0]] : tensor<1xi1>, %[[EMPTY1]] : tensor<1xi1>, %[[EMPTY2]] : tensor<1xi1>)
-// CHECK-NEXT: return %[[EXEC]]#0, %[[EXEC]]#1, %[[EXEC]]#2 : tensor<1xi1>, tensor<1xi1>, tensor<1xi1>
-// CHECK-NEXT: }
-// CHECK-NEXT: }
 
 OPENQASM 2.0;
 include "qelib1.inc";
@@ -48,3 +19,34 @@ h q[2];
 measure q[2] -> m2[0];
 measure q[0] -> m0[0];
 measure q[1] -> m1[0];
+
+// Check the complete operation sequence and SSA wiring.
+// CHECK-LABEL: module {
+// CHECK-NEXT:         qpu.module @qaoa_n3 {
+// CHECK-NEXT:           "qpu.circuit"() <{function_type = () -> (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>), sym_name = "main"}> ({
+// CHECK-NEXT:             %[[VAL_0:.*]] = "quantum.alloc"() : () -> !quantum.qubit<3>
+// CHECK-NEXT:             %[[VAL_1:.*]]:2 = "quantum.split"(%[[VAL_0]]) : (!quantum.qubit<3>) -> (!quantum.qubit<1>, !quantum.qubit<2>)
+// CHECK-NEXT:             %[[VAL_2:.*]] = "quantum.H"(%[[VAL_1]]#0) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+// CHECK-NEXT:             %[[VAL_3:.*]]:2 = "quantum.split"(%[[VAL_1]]#1) : (!quantum.qubit<2>) -> (!quantum.qubit<1>, !quantum.qubit<1>)
+// CHECK-NEXT:             %[[VAL_4:.*]] = "quantum.H"(%[[VAL_3]]#0) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+// CHECK-NEXT:             %[[VAL_5:.*]] = "quantum.H"(%[[VAL_3]]#1) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+// CHECK-NEXT:             %[[VAL_6:.*]], %[[VAL_7:.*]] = "quantum.measure"(%[[VAL_5]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
+// CHECK-NEXT:             %[[VAL_8:.*]] = "qpu.to_bits"(%[[VAL_6]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_9:.*]], %[[VAL_10:.*]] = "quantum.measure"(%[[VAL_2]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
+// CHECK-NEXT:             %[[VAL_11:.*]] = "qpu.to_bits"(%[[VAL_9]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-NEXT:             %[[VAL_12:.*]], %[[VAL_13:.*]] = "quantum.measure"(%[[VAL_4]]) : (!quantum.qubit<1>) -> (!quantum.measurement<1>, !quantum.qubit<1>)
+// CHECK-NEXT:             %[[VAL_14:.*]] = "qpu.to_bits"(%[[VAL_12]]) : (!quantum.measurement<1>) -> tensor<1xi1>
+// CHECK-DAG:             "quantum.deallocate"(%[[VAL_10]]) : (!quantum.qubit<1>) -> ()
+// CHECK-DAG:             "quantum.deallocate"(%[[VAL_13]]) : (!quantum.qubit<1>) -> ()
+// CHECK-DAG:             "quantum.deallocate"(%[[VAL_7]]) : (!quantum.qubit<1>) -> ()
+// CHECK-NEXT:             "qpu.return"(%[[VAL_11]], %[[VAL_14]], %[[VAL_8]]) : (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>) -> ()
+// CHECK-NEXT:           }) : () -> ()
+// CHECK-NEXT:         }
+// CHECK-NEXT:         func.func @qasm_main() -> (tensor<1xi1>, tensor<1xi1>, tensor<1xi1>) {
+// CHECK-NEXT:           %[[EMPTY_0:.*]] = tensor.empty() : tensor<1xi1>
+// CHECK-NEXT:           %[[EMPTY_1:.*]] = tensor.empty() : tensor<1xi1>
+// CHECK-NEXT:           %[[EMPTY_2:.*]] = tensor.empty() : tensor<1xi1>
+// CHECK-NEXT:           %[[EXECUTE_0:.*]]:3 = qpu.execute @qaoa_n3::@main ins () outs (%[[EMPTY_0]] : tensor<1xi1>, %[[EMPTY_1]] : tensor<1xi1>, %[[EMPTY_2]] : tensor<1xi1>)
+// CHECK-NEXT:           return %[[EXECUTE_0]]#0, %[[EXECUTE_0]]#1, %[[EXECUTE_0]]#2 : tensor<1xi1>, tensor<1xi1>, tensor<1xi1>
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }

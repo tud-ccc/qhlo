@@ -12,6 +12,7 @@
 
 #include <antlr4-runtime.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Support/Path.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
@@ -28,6 +29,13 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM2(
     llvm::StringRef filename,
     mlir::MLIRContext &context)
 {
+    QASM2TranslationUnit translationUnit;
+    auto &rootSource = translationUnit.addSource(context, source, filename);
+    if (rootSource.failed()) return {};
+
+    auto* program = rootSource.parseProgram();
+    if (!program || rootSource.failed()) return {};
+
     auto moduleLoc = mlir::FileLineColLoc::get(&context, filename, 1, 1);
 
     mlir::OwningOpRef<mlir::ModuleOp> module =
@@ -39,7 +47,7 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM2(
         builder,
         moduleLoc,
         {},
-        "qasm_generated",
+        llvm::sys::path::stem(filename),
         mlir::ArrayAttr{});
     qpuModule.getBodyRegion().emplaceBlock();
 
@@ -57,19 +65,11 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM2(
     QASMScope scope;
     GateLibrary gateLibrary;
     QASMIncludeResolver includeResolver;
-    qasm2::QASM2TranslationUnit translationUnit;
 
     includeResolver.addBuiltin(
         "qelib1.inc",
         qasm2::getQELib1Source(),
         "<qelib1.inc>");
-
-    auto &rootSource = translationUnit.addSource(context, source, filename);
-    if (rootSource.failed()) return {};
-
-    auto* program = rootSource.parseProgram();
-
-    if (rootSource.failed()) return {};
 
     QASM2Visitor visitor(
         context,
@@ -88,7 +88,7 @@ mlir::OwningOpRef<mlir::ModuleOp> parseQASM2(
 
     builder.setInsertionPointToEnd(&mainCircuit.getBody().front());
     for (const auto &entry : scope.getQRegs()) {
-        for (const auto &interval : entry.getValue().intervals.intervals()) {
+        for (const auto &interval : entry.getValue().getIntervals()) {
             mlir::quantum::DeallocateOp::create(
                 builder,
                 moduleLoc,

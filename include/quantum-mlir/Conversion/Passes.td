@@ -17,6 +17,7 @@ def ConvertQuantumToQILLR : Pass<"convert-quantum-to-qillr"> {
     let dependentDialects = [
         "quantum::QuantumDialect",
         "qillr::QILLRDialect",
+        "qpu::QPUDialect",
         "tensor::TensorDialect"
     ];
 }
@@ -28,6 +29,7 @@ def ConvertQILLRToLLVM : Pass<"convert-qillr-to-llvm"> {
     
     let dependentDialects = [
         "qillr::QILLRDialect",
+        "qpu::QPUDialect",
         "LLVM::LLVMDialect",
         "tensor::TensorDialect"
     ];

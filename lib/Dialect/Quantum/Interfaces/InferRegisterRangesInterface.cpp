@@ -109,6 +109,7 @@ RegisterRanges RegisterRanges::drop_front(size_t N) const
             // 2.1. Is diff = max - min? Then we start assembling from the next
             // range
             if (diff == (max - min)) {
+                ++i;
                 break;
             } else {
                 // 2.2. Is diff < max - min? Then we need to store
@@ -118,6 +119,7 @@ RegisterRanges RegisterRanges::drop_front(size_t N) const
                     current.getRegisterValue(),
                     {restMin, max, restMin, max});
                 values.push_back(rest);
+                ++i;
                 break;
             }
         }

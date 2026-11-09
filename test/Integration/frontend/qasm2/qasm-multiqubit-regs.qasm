@@ -1,40 +1,5 @@
 // RUN: quantum-qasm %s | quantum-opt --convert-quantum-to-qillr --canonicalize | FileCheck %s
 
-// CHECK: module {
-  // CHECK: qpu.module @qasm_generated {
-    // CHECK: "qpu.circuit"() <{function_type = () -> (tensor<1xi1>, tensor<1xi1>), sym_name = "main"}> ({
-      // CHECK: %[[C0:.+]] = arith.constant 0 : index
-      // CHECK: %[[CST:.+]] = arith.constant dense<false> : tensor<1xi1>
-      // CHECK: %[[QUBIT:.+]] = "qillr.alloc"() <{size = 2 : i64}> : () -> !qillr.qubit
-      // CHECK: %[[RESULT:.+]] = "qillr.ralloc"() <{size = 1 : i64}> : () -> !qillr.result
-      // CHECK: "qillr.measure"(%[[QUBIT]], %[[RESULT]]) <{inputIndex = [0], resultIndex = [0]}> : (!qillr.qubit, !qillr.result) -> ()
-      // CHECK: %[[MEASUREMENT:.+]] = "qillr.read_measurement"(%[[RESULT]]) <{index = []}> : (!qillr.result) -> tensor<1xi1>
-      // CHECK: %[[CMP:.+]] = arith.cmpi eq, %[[MEASUREMENT]], %[[CST]] : tensor<1xi1>
-      // CHECK: %[[EXTRACTED:.+]] = tensor.extract %[[CMP]][%[[C0]]] : tensor<1xi1>
-      // CHECK: scf.if %[[EXTRACTED]] {
-        // CHECK-NEXT: "qillr.X"(%[[QUBIT]]) <{index = [0]}> : (!qillr.qubit) -> ()
-      // CHECK-NEXT: }
-      // CHECK: %[[RESULT_1:.+]] = "qillr.ralloc"() <{size = 1 : i64}> : () -> !qillr.result
-      // CHECK: "qillr.measure"(%[[QUBIT]], %[[RESULT_1]]) <{inputIndex = [1], resultIndex = [0]}> : (!qillr.qubit, !qillr.result) -> ()
-      // CHECK: %[[MEASUREMENT_1:.+]] = "qillr.read_measurement"(%[[RESULT_1]]) <{index = []}> : (!qillr.result) -> tensor<1xi1>
-      // CHECK: %[[CMP_1:.+]] = arith.cmpi eq, %[[MEASUREMENT_1]], %[[CST]] : tensor<1xi1>
-      // CHECK: %[[EXTRACTED_4:.+]] = tensor.extract %[[CMP_1]][%[[C0]]] : tensor<1xi1>
-      // CHECK: scf.if %[[EXTRACTED_4]] {
-        // CHECK-NEXT: "qillr.X"(%[[QUBIT]]) <{index = [1]}> : (!qillr.qubit) -> ()
-      // CHECK-NEXT: }
-      // CHECK: "qillr.reset"(%[[QUBIT]]) <{index = [0]}> : (!qillr.qubit) -> ()
-      // CHECK: "qillr.reset"(%[[QUBIT]]) <{index = [1]}> : (!qillr.qubit) -> ()
-      // CHECK: "qillr.deallocate"(%[[QUBIT]]) <{index = [0]}> : (!qillr.qubit) -> ()
-      // CHECK: "qillr.deallocate"(%[[QUBIT]]) <{index = [1]}> : (!qillr.qubit) -> ()
-      // CHECK: "qpu.return"(%[[MEASUREMENT]], %[[MEASUREMENT_1]]) : (tensor<1xi1>, tensor<1xi1>) -> ()
-
-  // CHECK: func.func @qasm_main() -> (tensor<1xi1>, tensor<1xi1>) {
-    // CHECK: %[[EMPTY0:.+]] = tensor.empty() : tensor<1xi1>
-    // CHECK: %[[EMPTY1:.+]] = tensor.empty() : tensor<1xi1>
-    // CHECK: %[[RES:.+]]:2 = qpu.execute @qasm_generated::@main ins () outs (%[[EMPTY0]] : tensor<1xi1>, %[[EMPTY1]] : tensor<1xi1>)
-    // CHECK: return %[[RES]]#0, %[[RES]]#1 : tensor<1xi1>, tensor<1xi1>
-
-
 OPENQASM 2.0;
 include "qelib1.inc";
 qreg q[2];
@@ -46,3 +11,38 @@ measure q[1] -> c2[0];
 if(c2==0) x q[1];
 reset q[0];
 reset q[1];
+
+// Check the complete operation sequence and SSA wiring.
+// CHECK-LABEL: module {
+// CHECK-NEXT:         qpu.module @"qasm-multiqubit-regs" {
+// CHECK-NEXT:           "qpu.circuit"() <{function_type = () -> (tensor<1xi1>, tensor<1xi1>), sym_name = "main"}> ({
+// CHECK-NEXT:             %[[CONSTANT_0:.*]] = arith.constant false
+// CHECK-NEXT:             %[[VAL_0:.*]] = "qillr.alloc"() <{size = 2 : i64}> : () -> !qillr.qubit
+// CHECK-NEXT:             %[[VAL_1:.*]] = "qillr.ralloc"() <{size = 1 : i64}> : () -> !qillr.result
+// CHECK-NEXT:             "qillr.measure"(%[[VAL_0]], %[[VAL_1]]) <{inputIndex = [0], resultIndex = [0]}> : (!qillr.qubit, !qillr.result) -> ()
+// CHECK-NEXT:             %[[VAL_2:.*]] = "qpu.to_bits"(%[[VAL_1]]) : (!qillr.result) -> tensor<1xi1>
+// CHECK-NEXT:             %[[BITS_EQ_0:.*]] = "qpu.bits_eq"(%[[VAL_2]], %[[CONSTANT_0]]) : (tensor<1xi1>, i1) -> i1
+// CHECK-NEXT:             scf.if %[[BITS_EQ_0]] {
+// CHECK-NEXT:               "qillr.X"(%[[VAL_0]]) <{index = [0]}> : (!qillr.qubit) -> ()
+// CHECK-NEXT:             }
+// CHECK-NEXT:             %[[VAL_3:.*]] = "qillr.ralloc"() <{size = 1 : i64}> : () -> !qillr.result
+// CHECK-NEXT:             "qillr.measure"(%[[VAL_0]], %[[VAL_3]]) <{inputIndex = [1], resultIndex = [0]}> : (!qillr.qubit, !qillr.result) -> ()
+// CHECK-NEXT:             %[[VAL_4:.*]] = "qpu.to_bits"(%[[VAL_3]]) : (!qillr.result) -> tensor<1xi1>
+// CHECK-NEXT:             %[[BITS_EQ_1:.*]] = "qpu.bits_eq"(%[[VAL_4]], %[[CONSTANT_0]]) : (tensor<1xi1>, i1) -> i1
+// CHECK-NEXT:             scf.if %[[BITS_EQ_1]] {
+// CHECK-NEXT:               "qillr.X"(%[[VAL_0]]) <{index = [1]}> : (!qillr.qubit) -> ()
+// CHECK-NEXT:             }
+// CHECK-NEXT:             "qillr.reset"(%[[VAL_0]]) <{index = [0]}> : (!qillr.qubit) -> ()
+// CHECK-NEXT:             "qillr.reset"(%[[VAL_0]]) <{index = [1]}> : (!qillr.qubit) -> ()
+// CHECK-NEXT:             "qillr.deallocate"(%[[VAL_0]]) <{index = [0]}> : (!qillr.qubit) -> ()
+// CHECK-NEXT:             "qillr.deallocate"(%[[VAL_0]]) <{index = [1]}> : (!qillr.qubit) -> ()
+// CHECK-NEXT:             "qpu.return"(%[[VAL_2]], %[[VAL_4]]) : (tensor<1xi1>, tensor<1xi1>) -> ()
+// CHECK-NEXT:           }) : () -> ()
+// CHECK-NEXT:         }
+// CHECK-NEXT:         func.func @qasm_main() -> (tensor<1xi1>, tensor<1xi1>) {
+// CHECK-NEXT:           %[[EMPTY_0:.*]] = tensor.empty() : tensor<1xi1>
+// CHECK-NEXT:           %[[EMPTY_1:.*]] = tensor.empty() : tensor<1xi1>
+// CHECK-NEXT:           %[[EXECUTE_0:.*]]:2 = qpu.execute @"qasm-multiqubit-regs"::@main ins () outs (%[[EMPTY_0]] : tensor<1xi1>, %[[EMPTY_1]] : tensor<1xi1>)
+// CHECK-NEXT:           return %[[EXECUTE_0]]#0, %[[EXECUTE_0]]#1 : tensor<1xi1>, tensor<1xi1>
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }

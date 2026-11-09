@@ -6,40 +6,14 @@
 #ifndef QUANTUM_MLIR_FRONTEND_QASM_QASM2_GATELIBRARY_H
 #define QUANTUM_MLIR_FRONTEND_QASM_QASM2_GATELIBRARY_H
 
-#include "quantum-mlir/Dialect/Quantum/IR/QuantumOps.h"
-
-#include <llvm/ADT/SmallVector.h>
-#include <llvm/ADT/StringMap.h>
-#include <llvm/ADT/StringRef.h>
-#include <qasm2Parser.h>
-
-using namespace antlrcpp;
-
-using namespace antlr4;
+#include "../common/GateLibrary.h"
+#include "qasm2Parser.h"
 
 namespace quantum::frontend::qasm2 {
 
-struct GateDefinition {
-    std::string name;
-    llvm::SmallVector<std::string> parameters;
-    llvm::SmallVector<std::string> qubits;
-    qasm2::qasm2Parser::ScopeContext* body;
-    std::string filename;
-    mlir::quantum::GateOp gateOp;
-    bool realized{false};
-};
-
-class GateLibrary {
-public:
-    [[nodiscard]]
-    bool insert(GateDefinition definition);
-
-    [[nodiscard]]
-    GateDefinition* lookup(llvm::StringRef name);
-
-private:
-    llvm::StringMap<GateDefinition> definitions;
-};
+using GateDefinition =
+    quantum::frontend::GateDefinition<qasm2Parser::ScopeContext>;
+using GateLibrary = quantum::frontend::GateLibrary<qasm2Parser::ScopeContext>;
 
 } // namespace quantum::frontend::qasm2
 

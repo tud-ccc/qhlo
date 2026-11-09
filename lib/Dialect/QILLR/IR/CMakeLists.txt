@@ -8,6 +8,7 @@ add_mlir_dialect_library(QILLRIR
         QILLRIncGen
 
     LINK_LIBS PUBLIC
+        QPUInterfaces
         MLIRCallInterfaces
         MLIRFunctionInterfaces
         MLIRInferTypeOpInterface

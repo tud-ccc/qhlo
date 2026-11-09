@@ -11,8 +11,8 @@ module {
 %r = "qillr.ralloc"() <{size = 1 : i64}> : () -> !qillr.result
  // CHECK-NEXT: measure [[q]][0] -> [[c]][0];
 "qillr.measure"(%q, %r) <{inputIndex = [0], resultIndex = [0]}> : (!qillr.qubit, !qillr.result) -> ()
-// CHECK-NOT: "qillr.read_measurement"
-%mt = "qillr.read_measurement"(%r) <{index = [0]}> : (!qillr.result) -> tensor<1xi1>
+// CHECK-NOT: "qpu.to_bits"
+%mt = "qpu.to_bits"(%r) : (!qillr.result) -> tensor<1xi1>
 %cst = arith.constant dense<true> : tensor<1xi1>
 %cmp = arith.cmpi eq, %mt, %cst : tensor<1xi1>
 %c0 = arith.constant 0 : index

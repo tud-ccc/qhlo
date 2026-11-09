@@ -11,7 +11,7 @@ func.func @main()  -> i1 {
 
   // Measure the qubit
   "qillr.measure" (%q0, %r0) : (!qillr.qubit, !qillr.result) -> ()
-  %output = "qillr.read_measurement"(%r0) : (!qillr.result) -> tensor<1xi1>
+  %output = "qpu.to_bits"(%r0) : (!qillr.result) -> tensor<1xi1>
   %c0 = arith.constant 0 : index
   %result = tensor.extract %output[%c0] : tensor<1xi1>
   return %result : i1 

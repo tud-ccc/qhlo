@@ -5,14 +5,14 @@
 
 #include "quantum-mlir/Conversion/QuantumToQILLR/QuantumToQILLR.h"
 
-#include "quantum-mlir/Conversion/RVSDGConversion/RVSDGConversion.h"
 #include "quantum-mlir/Dialect/QILLR/IR/QILLROps.h"
 #include "quantum-mlir/Dialect/QILLR/IR/QILLRTypes.h"
+#include "quantum-mlir/Dialect/QPU/IR/QPUBase.h"
+#include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
 #include "quantum-mlir/Dialect/Quantum/Analysis/RegisterRangesAnalysis.h"
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumOps.h"
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumTypes.h"
 #include "quantum-mlir/Dialect/Quantum/Interfaces/InferRegisterRangesInterface.h"
-#include "quantum-mlir/Dialect/RVSDG/IR/RVSDGOps.h"
 
 #include <cstddef>
 #include <llvm/ADT/DenseMap.h>
@@ -32,6 +32,7 @@
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/IR/BuiltinAttributeInterfaces.h>
 #include <mlir/IR/BuiltinAttributes.h>
+#include <mlir/IR/BuiltinTypeInterfaces.h>
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
@@ -200,13 +201,13 @@ struct ConvertMeasure
         : public IndexTrackingOpConversionPattern<quantum::MeasureOp> {
     using IndexTrackingOpConversionPattern::IndexTrackingOpConversionPattern;
 
-    LogicalResult rewriteToTensor(
+    LogicalResult rewriteToBits(
         MeasureOp op,
         MeasureOpAdaptor adaptor,
-        quantum::ToTensorOp toTensorOp,
+        qpu::ToBitsOp toBitsOp,
         ConversionPatternRewriter &rewriter) const
     {
-        TypedValue<RankedTensorType> creg = toTensorOp.getResult();
+        TypedValue<ShapedType> creg = toBitsOp.getResult();
 
         assert(creg.getType().getRank() == 1 && "Only support tensor<?x_>");
         TypedValue<::mlir::qillr::ResultType> resultAlloc;
@@ -242,14 +243,14 @@ struct ConvertMeasure
             qubitIndex,
             0);
 
-        auto readMeasurement = qillr::ReadMeasurementOp::create(
+        auto readMeasurement = qpu::ToBitsOp::create(
             rewriter,
             op->getLoc(),
             creg.getType(),
             resultAlloc);
 
-        rewriter.replaceOp(toTensorOp, readMeasurement);
-        rewriter.replaceOp(op, {readMeasurement, adaptor.getInput()});
+        rewriter.replaceOp(toBitsOp, readMeasurement);
+        rewriter.replaceOp(op, {resultAlloc, adaptor.getInput()});
 
         return success();
     }
@@ -258,7 +259,7 @@ struct ConvertMeasure
         MeasureOp op,
         MeasureOpAdaptor adaptor,
         tensor::InsertSliceOp insertSliceOp,
-        quantum::ToTensorOp toTensorOp,
+        qpu::ToBitsOp toBitsOp,
         ConversionPatternRewriter &rewriter) const
     {
         auto creg = insertSliceOp.getDest();
@@ -298,15 +299,16 @@ struct ConvertMeasure
             qubitIndex,
             staticOffset);
 
-        auto readMeasurement = qillr::ReadMeasurementOp::create(
+        auto readMeasurement = qpu::ToBitsOp::create(
             rewriter,
             op->getLoc(),
             creg.getType(),
             resultAlloc);
 
         rewriter.replaceOp(insertSliceOp, readMeasurement);
-        rewriter.replaceOp(op, {readMeasurement, adaptor.getInput()});
-        rewriter.eraseOp(toTensorOp);
+        rewriter.replaceOp(op, {resultAlloc, adaptor.getInput()});
+        rewriter.eraseOp(toBitsOp);
+        return success();
     }
 
     LogicalResult matchAndRewrite(
@@ -317,24 +319,27 @@ struct ConvertMeasure
         // The quantum measurement looks like follows:
         // %c = ... tensor<jxi1> with j > i
         // %m, %q1 = measure(%q) : qubit<1> -> measurement<1>, qubit<1>
-        // %t = to_tensor(%m) -> tensor<1xi1>
+        // %t = qpu.to_bits(%m) -> tensor<1xi1>
         // if the dimension of %t and %c are equal insert_slice is omitted
         // %cnew = insert_slice(%t, %c) {i} -> tensor<1xi1>
         LLVM_DEBUG(llvm::dbgs() << "Lower measurement and results \n");
         auto m = op.getMeasurement();
-        auto toTensorOp = llvm::filter_to_vector(
-            m.getUsers(),
-            [](Operation* op) { return llvm::isa<ToTensorOp>(op); });
-        assert(toTensorOp.size() == 1 && "Only one use implemented.");
+        auto toBitsOp = llvm::filter_to_vector(m.getUsers(), [](Operation* op) {
+            return llvm::isa<qpu::ToBitsOp>(op);
+        });
+        if (toBitsOp.size() != 1 || !m.hasOneUse())
+            return rewriter.notifyMatchFailure(
+                op,
+                "requires exactly one to_bits user");
         auto insertSliceOpV = llvm::filter_to_vector(
-            toTensorOp.front()->getResult(0).getUsers(),
+            toBitsOp.front()->getResult(0).getUsers(),
             [](Operation* op) { return llvm::isa<tensor::InsertSliceOp>(op); });
 
         if (insertSliceOpV.size() == 0) {
-            if (failed(rewriteToTensor(
+            if (failed(rewriteToBits(
                     op,
                     adaptor,
-                    llvm::cast<quantum::ToTensorOp>(toTensorOp.front()),
+                    llvm::cast<qpu::ToBitsOp>(toBitsOp.front()),
                     rewriter)))
                 return failure();
         } else if (insertSliceOpV.size() == 1) {
@@ -342,14 +347,16 @@ struct ConvertMeasure
                     op,
                     adaptor,
                     llvm::cast<tensor::InsertSliceOp>(insertSliceOpV.front()),
-                    llvm::cast<quantum::ToTensorOp>(toTensorOp.front()),
+                    llvm::cast<qpu::ToBitsOp>(toBitsOp.front()),
                     rewriter)))
                 return failure();
         } else {
             LLVM_DEBUG(
-                llvm::dbgs() << "toTensorOp is used " << insertSliceOpV.size()
-                             << " times\n");
-            toTensorOp.front()->emitOpError("has unsupported many uses.");
+                llvm::dbgs()
+                << "toBitsOp is used " << insertSliceOpV.size() << " times\n");
+            return rewriter.notifyMatchFailure(
+                op,
+                "to_bits has unsupported multiple insert_slice users");
         }
         return success();
     } // namespace
@@ -787,14 +794,13 @@ void ConvertQuantumToQILLRPass::runOnOperation()
         typeConverter);
     populateCallOpTypeConversionPattern(patterns, typeConverter);
     populateReturnOpTypeConversionPattern(patterns, typeConverter);
-    // Populate conversions from `rvsdg` dialect
-    rvsdg::populateConvertRVSDGPatterns(typeConverter, patterns);
     scf::populateSCFStructuralTypeConversionsAndLegality(
         typeConverter,
         patterns,
         target);
 
     target.addLegalDialect<qillr::QILLRDialect>();
+    target.addLegalDialect<qpu::QPUDialect>();
     target.addIllegalDialect<quantum::QuantumDialect>();
     target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
         return typeConverter.isSignatureLegal(op.getFunctionType());

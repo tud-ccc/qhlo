@@ -1,4 +1,4 @@
-/// Implements the QILLR ReadMeasurement elimination pass
+/// Eliminates repeated QPU reads of QILLR result storage.
 ///
 /// @file
 /// @author     Lars Schuetze (lars.schuetze@tu-dresden.de)
@@ -8,11 +8,13 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "quantum-mlir/Dialect/QILLR/IR/QILLROps.h"
 #include "quantum-mlir/Dialect/QILLR/Transforms/Passes.h"
+#include "quantum-mlir/Dialect/QPU/IR/QPUOps.h"
 
 #include <cstddef>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/LogicalResult.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinTypes.h>
@@ -36,40 +38,24 @@ namespace mlir::qillr {
 
 namespace {
 
-Operation* findImmediateDominatingMeasure(
-    ReadMeasurementOp readMeasurement,
-    DominanceInfo &domInfo)
+// Only reuse a snapshot when no intervening operation can change storage.
+static bool canReuseRead(qpu::ToBitsOp previous, qpu::ToBitsOp current)
 {
-    Operation* op = readMeasurement.getOperation();
-    Block* block = op->getBlock();
-    Region* region = block->getParent();
-
-    // Case 1: single-block region -> just scan backwards
-    if (region->hasOneBlock()) {
-        for (Operation* it = op->getPrevNode(); it; it = it->getPrevNode())
-            if (auto measure = llvm::dyn_cast<qillr::MeasureOp>(it))
-                if (measure.getResult() == readMeasurement.getInput())
-                    return measure;
-        return nullptr;
+    Operation* cursor = current;
+    while (cursor) {
+        if (auto* preceding = cursor->getPrevNode()) {
+            if (preceding == previous.getOperation()) return true;
+            if (!isMemoryEffectFree(preceding)) return false;
+            cursor = preceding;
+        } else {
+            auto* parent = cursor->getParentOp();
+            // Do not cross loops: later iterations may observe intervening
+            // writes.
+            if (!llvm::isa_and_nonnull<scf::IfOp>(parent)) return false;
+            cursor = parent;
+        }
     }
-
-    // Case 2: multiple blocks -> use dominator tree
-    for (Operation* it = op->getPrevNode(); it; it = it->getPrevNode())
-        if (auto measure = llvm::dyn_cast<qillr::MeasureOp>(it))
-            if (measure.getResult() == readMeasurement.getInput())
-                return measure;
-
-    auto* node = domInfo.getNode(block);
-    while (auto* idom = node->getIDom()) {
-        Block* idomBlock = idom->getBlock();
-        for (auto &blockOp : llvm::reverse(*idomBlock))
-            if (auto measure = llvm::dyn_cast<qillr::MeasureOp>(&blockOp))
-                if (measure.getResult() == readMeasurement.getInput())
-                    return measure;
-        node = idom;
-    }
-
-    return nullptr;
+    return false;
 }
 
 struct ReplaceRepeatedMeasurementReadsPass
@@ -81,61 +67,30 @@ struct ReplaceRepeatedMeasurementReadsPass
     void runOnOperation() override;
 };
 
-struct ReplaceRepeatedReads
-        : public OpRewritePattern<qillr::ReadMeasurementOp> {
-
+struct ReplaceRepeatedReads : public OpRewritePattern<qpu::ToBitsOp> {
     DominanceInfo &domInfo;
 
     ReplaceRepeatedReads(MLIRContext* context, DominanceInfo &domInfo)
-            : OpRewritePattern<qillr::ReadMeasurementOp>(context),
-              domInfo(domInfo) {};
+            : OpRewritePattern<qpu::ToBitsOp>(context),
+              domInfo(domInfo)
+    {}
 
-    LogicalResult matchAndRewrite(
-        qillr::ReadMeasurementOp op,
-        PatternRewriter &rewriter) const override
+    LogicalResult
+    matchAndRewrite(qpu::ToBitsOp op, PatternRewriter &rewriter) const override
     {
-        // %r = ralloc
-        // measure(%q, %r)
-        // %m1 = read_measurement(%r)
-        // %m2 = read_measurement(%r)
-        // measure(%q, %r)
-        // %m3 = read_measurement(%r)
-        // replace uses of %m2 by %m1 and remove %m2 = ...
-        // but retain %m3
-        auto mutualResultAlloc = op.getInput();
-        auto dominatingMeasure = findImmediateDominatingMeasure(op, domInfo);
+        if (!llvm::isa<qillr::ResultType>(op.getSrc().getType())
+            || !llvm::isa<RankedTensorType>(op.getDst().getType()))
+            return failure();
 
-        // There has been no measure(%q, %r) of %r
-        if (dominatingMeasure == nullptr) {
-            auto dim = llvm::cast<AllocResultOp>(op.getInput().getDefiningOp())
-                           .getSize();
-            auto tensorTy = RankedTensorType::get(dim, rewriter.getI1Type());
-            auto zeroAttr = DenseIntElementsAttr::get(tensorTy, false);
-            auto zeroOp = arith::ConstantOp::create(
-                rewriter,
-                op.getLoc(),
-                tensorTy,
-                zeroAttr);
-            rewriter.replaceAllUsesWith(op.getMeasurement(), zeroOp);
-            rewriter.eraseOp(op);
-            return success();
-        }
-
-        // Find other read_measurement operations that are
-        // immediately domminated by the same measurement
-        // operation
-        for (auto user : mutualResultAlloc.getUsers()) {
-            if (ReadMeasurementOp read =
-                    llvm::dyn_cast<qillr::ReadMeasurementOp>(user)) {
-                if (dominatingMeasure
-                        == findImmediateDominatingMeasure(read, domInfo)
-                    && op != read) {
-                    auto m1 = read.getResult();
-                    auto m2 = op.getResult();
-                    m2.replaceAllUsesWith(m1);
-                    rewriter.eraseOp(op);
-                    return success();
-                }
+        for (auto* user : op.getSrc().getUsers()) {
+            auto read = llvm::dyn_cast<qpu::ToBitsOp>(user);
+            if (!read || read == op || read.getType() != op.getType()) continue;
+            if (domInfo.properlyDominates(
+                    read.getOperation(),
+                    op.getOperation())
+                && canReuseRead(read, op)) {
+                rewriter.replaceOp(op, read.getDst());
+                return success();
             }
         }
         return failure();

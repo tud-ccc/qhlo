@@ -450,7 +450,8 @@ LogicalResult foldUnitaryTraitImpl(
         // q1 = adjoint(op)(q); q2 = op(q1)
         // OR q1 = op; q2 = adjoint(op)(q1)
         auto otherOp = op->getOperand(0).getDefiningOp();
-        if (otherOp->hasTrait<AdjointTo<ConcreteType>::template Impl>()) {
+        if (otherOp
+            && otherOp->hasTrait<AdjointTo<ConcreteType>::template Impl>()) {
             results.push_back(otherOp->getOperand(0));
             return success();
         }
@@ -497,6 +498,67 @@ LogicalResult SplitOp::verify()
         return emitOpError(
             "operand size must be equal to sum of result sizes.");
 
+    return success();
+}
+
+LogicalResult CtrlOp::verify()
+{
+    const int64_t nctrls = getNctrls().getSExtValue();
+    if (nctrls < 1 || static_cast<uint64_t>(nctrls) > getInput().size())
+        return emitOpError(
+            "'nctrls' must be between one and the number of inputs");
+    for (Value control : getInput().take_front(nctrls))
+        if (cast<QubitType>(control.getType()).getSize() != 1)
+            return emitOpError("control operands must be single qubits");
+    if (getBody().empty()) return emitOpError("requires a non-empty body");
+    auto targets = getInput().drop_front(nctrls);
+    auto &block = getBody().front();
+    if (block.getNumArguments() != targets.size())
+        return emitOpError("body arguments must match the target operands");
+    for (auto [argument, target] :
+         llvm::zip_equal(block.getArguments(), targets)) {
+        if (argument.getType() != target.getType())
+            return emitOpError(
+                "body argument types must match the target operand types");
+    }
+    return success();
+}
+
+LogicalResult CtrlOp::verifyRegions()
+{
+    if (!isa<YieldOp>(getBody().front().getTerminator()))
+        return emitOpError("body must terminate with quantum.yield");
+    // Classical captures are useful for gate parameters. Qubit captures would
+    // bypass the explicit state threading through region arguments and results.
+    auto walk = getBody().walk([&](Operation* op) {
+        for (Value operand : op->getOperands()) {
+            if (isa<QubitType>(operand.getType())
+                && !getBody().isAncestor(operand.getParentRegion())) {
+                op->emitOpError(
+                    "qubits must be passed through quantum.ctrl body "
+                    "arguments");
+                return WalkResult::interrupt();
+            }
+        }
+        return WalkResult::advance();
+    });
+    return failure(walk.wasInterrupted());
+}
+
+LogicalResult YieldOp::verify()
+{
+    auto control = cast<CtrlOp>((*this)->getParentOp());
+    const int64_t nctrls = control.getNctrls().getSExtValue();
+    if (nctrls < 1 || static_cast<uint64_t>(nctrls) > control.getNumResults())
+        return emitOpError(
+            "enclosing quantum.ctrl has an invalid control count");
+    auto targets = control.getResult().drop_front(nctrls);
+    if (getNumOperands() != targets.size())
+        return emitOpError("must yield one value for each target result");
+    for (auto [operand, target] : llvm::zip_equal(getOperands(), targets))
+        if (operand.getType() != target.getType())
+            return emitOpError(
+                "operand types must match the target result types");
     return success();
 }
 
@@ -595,6 +657,34 @@ void GateOp::build(
         /*resultAttrs=*/{},
         getArgAttrsAttrName(state.name),
         getResAttrsAttrName(state.name));
+}
+
+//===----------------------------------------------------------------------===//
+// CtrlOp
+//===----------------------------------------------------------------------===//
+
+void CtrlOp::build(
+    OpBuilder &builder,
+    OperationState &state,
+    ValueRange controls,
+    ValueRange targets)
+{
+    SmallVector<Value> operands;
+    llvm::append_range(operands, controls);
+    llvm::append_range(operands, targets);
+    ValueRange inputs(operands);
+    build(
+        builder,
+        state,
+        inputs.getTypes(),
+        inputs,
+        builder.getIndexAttr(controls.size()));
+
+    // Populate the region without changing the caller's insertion point.
+    // The caller supplies the body operations and yields the updated targets.
+    auto &block = state.regions.front()->emplaceBlock();
+    for (Value target : targets)
+        block.addArgument(target.getType(), state.location);
 }
 
 //===----------------------------------------------------------------------===//

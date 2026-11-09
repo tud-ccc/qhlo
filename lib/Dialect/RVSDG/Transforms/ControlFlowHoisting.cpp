@@ -74,7 +74,9 @@ void ControlFlowHoistingPass::checkAndMarkEquivalentOperations(
             // Potentially this will leave a gamma node that directly yields all
             // incoming values. Such a GammaNode should be removed by
             // canonicalization
-            if (llvm::isa<YieldOp>(lOp) || llvm::isa<YieldOp>(rOp)) continue;
+            if (llvm::isa<mlir::rvsdg::YieldOp>(lOp)
+                || llvm::isa<mlir::rvsdg::YieldOp>(rOp))
+                continue;
 
             if (OperationEquivalence::isEquivalentTo(
                     lOp,

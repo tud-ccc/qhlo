@@ -1,4 +1,5 @@
 add_library(QuantumQASMCommon
+    NativeQuantumGate.cpp
     QASMIncludeResolver.cpp
     QASMDiagnostics.cpp
     QASMScope.cpp
@@ -13,7 +14,9 @@ target_include_directories(QuantumQASMCommon
 
 target_link_libraries(QuantumQASMCommon
     PUBLIC
+        QuantumIR
         MLIRIR
         MLIRSupport
+        MLIRTensorDialect
         LLVMSupport
 )

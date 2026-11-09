@@ -459,19 +459,6 @@ def QILLR_MeasureOp : QILLR_Op<"measure", [MemoryEffects<[MemRead, MemWrite]>]> 
     );
 }
 
-def QILLR_ReadMeasurementOp : QILLR_Op<"read_measurement", [MemoryEffects<[MemRead]>]> {
-  let summary = "Read the measurement value from result memory.";
-  let description = [{ }];
-  
-  let arguments = (ins
-    QILLR_ResultType:$input,
-    OptionalProp<I64Prop>:$index
-  );
-  let results = (outs
-    QILLR_MeasurementType:$measurement
-  );
-}
-
 def QILLR_ResetOp : QILLR_Op<"reset", [MemoryEffects<[MemRead, MemWrite]>]> {
   let summary = "Resets the qubit in the computational basis.";
   let description = [{ }];

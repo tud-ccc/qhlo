@@ -8,6 +8,7 @@ add_mlir_dialect_library(QILLRTransforms
         QILLRPassesIncGen
 
     LINK_LIBS PUBLIC
+        QPUIR
         MLIRPass
         MLIRTransforms
         MLIRTransformUtils

@@ -47,7 +47,7 @@ module {
 
       "qillr.H"(%q) : (!qillr.qubit) -> ()
       "qillr.measure"(%q, %r) : (!qillr.qubit, !qillr.result) -> ()
-      %m = "qillr.read_measurement"(%r) : (!qillr.result) -> tensor<1xi1>
+      %m = "qpu.to_bits"(%r) : (!qillr.result) -> tensor<1xi1>
 
       %oneInt = arith.constant 1 : i32
       %zeroInt = arith.constant 0 : i32
@@ -74,9 +74,9 @@ func.func @test_qasm_output_correctness() -> ()  {
     "qillr.swap" (%0, %1) : (!qillr.qubit, !qillr.qubit) -> ()
     "qillr.measure" (%0, %2) : (!qillr.qubit, !qillr.result) -> ()
     
-    %5 = "qillr.read_measurement" (%2) : (!qillr.result) -> tensor<1xi1>
+    %5 = "qpu.to_bits" (%2) : (!qillr.result) -> tensor<1xi1>
     "qillr.measure" (%1, %3) : (!qillr.qubit, !qillr.result) -> ()
-    %6 = "qillr.read_measurement" (%3) : (!qillr.result) -> tensor<1xi1>
+    %6 = "qpu.to_bits" (%3) : (!qillr.result) -> tensor<1xi1>
 
     "qillr.deallocate" (%0) : (!qillr.qubit) -> ()
     "qillr.deallocate" (%1) : (!qillr.qubit) -> ()
