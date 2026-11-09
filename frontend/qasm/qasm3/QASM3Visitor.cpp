@@ -11,6 +11,7 @@
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumOps.h"
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumTypes.h"
 
+#include <algorithm>
 #include <any>
 #include <cassert>
 #include <charconv>
@@ -19,6 +20,7 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/ScopeExit.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/StringSwitch.h>
 #include <llvm/ADT/Twine.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/ErrorHandling.h>
@@ -283,7 +285,8 @@ bool isConstantExpression(
         return isConstantExpression(parens->expression(), scope);
     if (auto* unary =
             dynamic_cast<qasm3Parser::UnaryExpressionContext*>(expression))
-        return isConstantExpression(unary->expression(), scope);
+        return unary->op->getType() == qasm3Parser::MINUS
+               && isConstantExpression(unary->expression(), scope);
     if (auto* binary =
             dynamic_cast<qasm3Parser::AdditiveExpressionContext*>(expression))
         return isConstantExpression(binary->expression(0), scope)
@@ -670,6 +673,174 @@ mlir::FailureOr<mlir::Value> QASM3Visitor::emitBinaryExpression(
     }
 }
 
+mlir::FailureOr<mlir::Value>
+QASM3Visitor::emitCondition(qasm3Parser::ExpressionContext* expression)
+{
+    auto value = emitExpression(expression);
+    if (mlir::failed(value)) return mlir::failure();
+    if (value->getType().isInteger(1)) return *value;
+    if (auto type = mlir::dyn_cast<mlir::RankedTensorType>(value->getType());
+        type && type.getRank() == 1 && type.getDimSize(0) == 1
+        && type.getElementType().isInteger(1)) {
+        auto one = mlir::arith::ConstantOp::create(
+            builder,
+            getLocation(expression),
+            builder.getBoolAttr(true));
+        return mlir::qpu::BitsEqOp::create(
+                   builder,
+                   getLocation(expression),
+                   builder.getI1Type(),
+                   *value,
+                   one.getResult())
+            .getResult();
+    }
+    error(expression, "condition requires a bool or a single bit");
+    return mlir::failure();
+}
+
+mlir::FailureOr<mlir::Value> QASM3Visitor::emitComparison(
+    qasm3Parser::ExpressionContext* expression,
+    llvm::StringRef predicate,
+    qasm3Parser::ExpressionContext* lhs,
+    qasm3Parser::ExpressionContext* rhs)
+{
+    const auto loc = getLocation(expression);
+    auto left = emitExpression(lhs);
+    if (mlir::failed(left)) return mlir::failure();
+    auto right = emitExpression(rhs);
+    if (mlir::failed(right)) return mlir::failure();
+    const bool equality = predicate == "==" || predicate == "!=";
+
+    // Bit-sequence equality uses the unsigned encoding defined by bits_eq.
+    // Integer literals must fit rather than being silently truncated.
+    if (mlir::isa<mlir::RankedTensorType>(right->getType())) {
+        std::swap(left, right);
+        std::swap(lhs, rhs);
+    }
+    if (auto bits = mlir::dyn_cast<mlir::RankedTensorType>(left->getType())) {
+        if (!equality || bits.getRank() != 1 || !bits.hasStaticShape()
+            || !bits.getElementType().isInteger(1)
+            || !mlir::isa<mlir::IntegerType>(right->getType())) {
+            error(
+                expression,
+                "bit sequences require equality with an integer or bool");
+            return mlir::failure();
+        }
+        auto integerType = builder.getIntegerType(bits.getDimSize(0));
+        if (isConstantExpression(rhs, scope)) {
+            auto constant = evaluateConstant(rhs);
+            if (mlir::failed(constant)) return mlir::failure();
+            auto integer = mlir::dyn_cast<mlir::IntegerAttr>(*constant);
+            if (!integer
+                || (!integer.getType().isInteger(1)
+                    && integer.getValue().isNegative())
+                || !integer.getValue().isIntN(integerType.getWidth())) {
+                error(rhs, "comparison value does not fit in the bit sequence");
+                return mlir::failure();
+            }
+            right =
+                mlir::arith::ConstantOp::create(
+                    builder,
+                    loc,
+                    builder.getIntegerAttr(
+                        integerType,
+                        integer.getValue().zextOrTrunc(integerType.getWidth())))
+                    .getResult();
+        }
+        if (right->getType() != integerType) {
+            error(
+                rhs,
+                "comparison integer width must match the bit sequence length");
+            return mlir::failure();
+        }
+        mlir::Value result = mlir::qpu::BitsEqOp::create(
+            builder,
+            loc,
+            builder.getI1Type(),
+            *left,
+            *right);
+        if (predicate == "!=") {
+            auto one = mlir::arith::ConstantOp::create(
+                builder,
+                loc,
+                builder.getBoolAttr(true));
+            result =
+                builder.createOrFold<mlir::arith::XOrIOp>(loc, result, one);
+        }
+        return result;
+    }
+
+    auto leftType = left->getType();
+    auto rightType = right->getType();
+    // Indexed bits have scalar i1 values. Accept the same 0/1 literals as
+    // comparisons against a one-element bit sequence.
+    if (equality && leftType != rightType
+        && (leftType.isInteger(1) || rightType.isInteger(1))) {
+        const bool scalarOnLeft = leftType.isInteger(1);
+        auto* literal = scalarOnLeft ? rhs : lhs;
+        if (isConstantExpression(literal, scope)) {
+            auto constant = evaluateConstant(literal);
+            if (mlir::failed(constant)) return mlir::failure();
+            if (auto integer = mlir::dyn_cast<mlir::IntegerAttr>(*constant);
+                integer && !integer.getValue().isNegative()
+                && integer.getValue().isIntN(1)) {
+                auto bit = mlir::arith::ConstantOp::create(
+                    builder,
+                    loc,
+                    builder.getBoolAttr(!integer.getValue().isZero()));
+                if (scalarOnLeft)
+                    right = bit.getResult();
+                else
+                    left = bit.getResult();
+                leftType = left->getType();
+                rightType = right->getType();
+            }
+        }
+    }
+    const bool booleans = leftType.isInteger(1) || rightType.isInteger(1);
+    if (booleans && (!equality || leftType != rightType)) {
+        error(expression, "Boolean comparisons require two Boolean operands");
+        return mlir::failure();
+    }
+    if (!mlir::isa<mlir::IntegerType, mlir::FloatType>(leftType)
+        || !mlir::isa<mlir::IntegerType, mlir::FloatType>(rightType)) {
+        error(expression, "unsupported comparison operand types");
+        return mlir::failure();
+    }
+    const bool floating = mlir::isa<mlir::FloatType>(leftType)
+                          || mlir::isa<mlir::FloatType>(rightType);
+    mlir::Type type = floating ? mlir::Type(builder.getF64Type())
+                               : builder.getIntegerType(
+                                     std::max(
+                                         leftType.getIntOrFloatBitWidth(),
+                                         rightType.getIntOrFloatBitWidth()));
+    left = convertValue(*left, type, lhs);
+    if (mlir::failed(left)) return mlir::failure();
+    right = convertValue(*right, type, rhs);
+    if (mlir::failed(right)) return mlir::failure();
+    if (floating) {
+        mlir::arith::CmpFPredicate pred =
+            llvm::StringSwitch<mlir::arith::CmpFPredicate>(predicate)
+                .Case("==", mlir::arith::CmpFPredicate::OEQ)
+                .Case("!=", mlir::arith::CmpFPredicate::UNE)
+                .Case("<", mlir::arith::CmpFPredicate::OLT)
+                .Case("<=", mlir::arith::CmpFPredicate::OLE)
+                .Case(">", mlir::arith::CmpFPredicate::OGT)
+                .Case(">=", mlir::arith::CmpFPredicate::OGE);
+        return builder
+            .createOrFold<mlir::arith::CmpFOp>(loc, pred, *left, *right);
+    }
+    mlir::arith::CmpIPredicate pred =
+        llvm::StringSwitch<mlir::arith::CmpIPredicate>(predicate)
+            .Case("==", mlir::arith::CmpIPredicate::eq)
+            .Case("!=", mlir::arith::CmpIPredicate::ne)
+            .Case("<", mlir::arith::CmpIPredicate::slt)
+            .Case("<=", mlir::arith::CmpIPredicate::sle)
+            .Case(">", mlir::arith::CmpIPredicate::sgt)
+            .Case(">=", mlir::arith::CmpIPredicate::sge);
+    return builder.createOrFold<mlir::arith::CmpIOp>(loc, pred, *left, *right);
+}
+
 mlir::FailureOr<mlir::Value> QASM3Visitor::emitExpression(
     qasm3Parser::ExpressionContext* expression,
     mlir::Type expectedType)
@@ -701,6 +872,90 @@ mlir::FailureOr<mlir::Value> QASM3Visitor::emitExpression(
             if (mlir::failed(declaration)) return mlir::failure();
             value = emitRValue(**declaration, expression);
         }
+    } else if (
+        auto* indexed =
+            dynamic_cast<qasm3Parser::IndexExpressionContext*>(expression)) {
+        auto source = emitExpression(indexed->expression());
+        if (mlir::failed(source)) return mlir::failure();
+        auto type = mlir::dyn_cast<mlir::RankedTensorType>(source->getType());
+        auto* index = indexed->indexOperator();
+        if (!type || type.getRank() != 1 || !type.hasStaticShape()
+            || index->setExpression() || !index->rangeExpression().empty()
+            || index->expression().size() != 1) {
+            error(expression, "expected a single constant classical bit index");
+            return mlir::failure();
+        }
+        auto offset = evaluateConstantInteger(index->expression(0));
+        if (mlir::failed(offset)) return mlir::failure();
+        int64_t normalized =
+            *offset < 0 ? *offset + type.getDimSize(0) : *offset;
+        if (normalized < 0 || normalized >= type.getDimSize(0)) {
+            error(expression, "classical bit index is out of range");
+            return mlir::failure();
+        }
+        auto position = mlir::arith::ConstantIndexOp::create(
+            builder,
+            getLocation(expression),
+            normalized);
+        value = mlir::tensor::ExtractOp::create(
+                    builder,
+                    getLocation(expression),
+                    *source,
+                    mlir::ValueRange{position})
+                    .getResult();
+    } else if (
+        auto* comparison =
+            dynamic_cast<qasm3Parser::EqualityExpressionContext*>(expression)) {
+        value = emitComparison(
+            expression,
+            comparison->op->getText(),
+            comparison->expression(0),
+            comparison->expression(1));
+    } else if (
+        auto* comparison =
+            dynamic_cast<qasm3Parser::ComparisonExpressionContext*>(
+                expression)) {
+        value = emitComparison(
+            expression,
+            comparison->op->getText(),
+            comparison->expression(0),
+            comparison->expression(1));
+    } else if (
+        auto* logical = dynamic_cast<qasm3Parser::LogicalAndExpressionContext*>(
+            expression)) {
+        auto left = emitCondition(logical->expression(0));
+        if (mlir::failed(left)) return mlir::failure();
+        auto right = emitCondition(logical->expression(1));
+        if (mlir::failed(right)) return mlir::failure();
+        value = builder.createOrFold<mlir::arith::AndIOp>(
+            getLocation(expression),
+            *left,
+            *right);
+    } else if (
+        auto* logical = dynamic_cast<qasm3Parser::LogicalOrExpressionContext*>(
+            expression)) {
+        auto left = emitCondition(logical->expression(0));
+        if (mlir::failed(left)) return mlir::failure();
+        auto right = emitCondition(logical->expression(1));
+        if (mlir::failed(right)) return mlir::failure();
+        value = builder.createOrFold<mlir::arith::OrIOp>(
+            getLocation(expression),
+            *left,
+            *right);
+    } else if (
+        auto* unary =
+            dynamic_cast<qasm3Parser::UnaryExpressionContext*>(expression);
+        unary && unary->op->getType() == qasm3Parser::EXCLAMATION_POINT) {
+        auto operand = emitCondition(unary->expression());
+        if (mlir::failed(operand)) return mlir::failure();
+        auto one = mlir::arith::ConstantOp::create(
+            builder,
+            getLocation(expression),
+            builder.getBoolAttr(true));
+        value = builder.createOrFold<mlir::arith::XOrIOp>(
+            getLocation(expression),
+            *operand,
+            one);
     } else if (
         auto* unary =
             dynamic_cast<qasm3Parser::UnaryExpressionContext*>(expression);
@@ -1136,6 +1391,85 @@ std::any QASM3Visitor::visitScope(qasm3Parser::ScopeContext* ctx)
     return visitChildren(ctx);
 }
 
+std::any QASM3Visitor::visitIfStatement(qasm3Parser::IfStatementContext* ctx)
+{
+    auto condition = emitCondition(ctx->expression());
+    if (mlir::failed(condition)) return {};
+    const auto loc = getLocation(ctx);
+
+    // Use whole registers at control-flow boundaries so branches may split
+    // different slices without changing the types of the merged state.
+    auto qubits = scope.getVisibleQRegs();
+    llvm::SmallVector<mlir::Value*> classical;
+    for (auto position = scope.getPosition(); position.scope;
+         position = position.scope->getEnclosingPosition()) {
+        for (auto* declaration = position.declaration; declaration;
+             declaration = declaration->previous) {
+            if (scope.lookup(declaration->name) != declaration) continue;
+            if (auto* variable =
+                    std::get_if<QASMScope::Variable>(&declaration->payload))
+                classical.push_back(&variable->value);
+            else if (
+                auto* reg = std::get_if<QASMScope::ClassicalRegister*>(
+                    &declaration->payload))
+                classical.push_back(&(*reg)->value);
+        }
+    }
+
+    auto readState = [&] {
+        llvm::SmallVector<mlir::Value> values;
+        for (auto* reg : qubits)
+            values.push_back(
+                scope.materializeRegister(*reg, {0, reg->size, 1}, builder, loc)
+                    .value);
+        for (auto* value : classical) values.push_back(*value);
+        return values;
+    };
+    auto writeState = [&](mlir::ValueRange values) {
+        for (auto [reg, value] :
+             llvm::zip_equal(qubits, values.take_front(qubits.size())))
+            reg->updateWholeRegister(value);
+        for (auto [slot, value] :
+             llvm::zip_equal(classical, values.drop_front(qubits.size())))
+            *slot = value;
+    };
+    const auto incoming = readState();
+    llvm::SmallVector<mlir::Type> types;
+    for (auto value : incoming) types.push_back(value.getType());
+
+    mlir::OpBuilder::InsertionGuard insertionGuard(builder);
+    auto ifOp = mlir::scf::IfOp::create(
+        builder,
+        loc,
+        types,
+        *condition,
+        /*withElseRegion=*/true);
+    auto &enclosingScope = scope.getCurrentScope();
+    llvm::scope_exit scopeGuard([&] {
+        scope.setCurrentScope(enclosingScope);
+        if (failed()) writeState(incoming);
+    });
+    auto emitBranch = [&](mlir::Block &block,
+                          qasm3Parser::StatementOrScopeContext* body) {
+        writeState(incoming);
+        scope.setCurrentScope(enclosingScope);
+        // Single-statement bodies need the same lexical isolation as blocks.
+        scope.enterScope(QASMScope::LexicalScope::Kind::Block);
+        if (!block.empty()) block.back().erase();
+        builder.setInsertionPointToEnd(&block);
+        if (body) body->accept(this);
+        if (failed()) return;
+        auto values = readState();
+        mlir::scf::YieldOp::create(builder, loc, values);
+    };
+    emitBranch(ifOp.getThenRegion().front(), ctx->if_body);
+    if (failed()) return {};
+    emitBranch(ifOp.getElseRegion().front(), ctx->else_body);
+    if (failed()) return {};
+    writeState(ifOp.getResults());
+    return {};
+}
+
 std::any QASM3Visitor::visitProgram(qasm3Parser::ProgramContext* ctx)
 {
     translationUnit.enterSource(filename);
@@ -1409,6 +1743,21 @@ std::any QASM3Visitor::visitConstDeclarationStatement(
 // ################################################################################
 // # Statements
 // ################################################################################
+
+std::any QASM3Visitor::visitStatement(qasm3Parser::StatementContext* ctx)
+{
+    if (failed()) return {};
+    // TODO: Lower loops and switch, then add early exits when SCF supports
+    // them. Default traversal would otherwise emit bodies unconditionally or
+    // ignore transfers, including those nested in a supported conditional.
+    if (ctx->forStatement() || ctx->whileStatement() || ctx->switchStatement()
+        || ctx->breakStatement() || ctx->continueStatement()
+        || ctx->returnStatement() || ctx->endStatement()) {
+        error(ctx, "unsupported control-flow statement");
+        return {};
+    }
+    return visitChildren(ctx);
+}
 
 mlir::LogicalResult QASM3Visitor::emitMeasurement(
     qasm3Parser::MeasureExpressionContext &measurement,

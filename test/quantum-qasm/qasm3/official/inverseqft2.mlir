@@ -1,14 +1,14 @@
-// RUN: quantum-qasm %S/Inputs/inverseqft2.qasm | FileCheck %s
-// XFAIL: *
-// Classical conditional lowering is not implemented; see README.md.
-// Remove XFAIL when supported and extend the checks for this example's features.
+// RUN: quantum-qasm %S/Inputs/inverseqft2.qasm > %t.mlir
+// RUN: FileCheck %s < %t.mlir
+// RUN: quantum-opt %t.mlir -verify-linearity -o /dev/null
 
 // The unmodified upstream source and provenance are in Inputs/ and README.md.
 // Coverage: Scalar measurement bits and classical conditions.
-// Require a completed circuit, not just the current empty module/circuit skeleton.
 
 // CHECK: qpu.module @inverseqft2
 // CHECK: sym_name = "main"
-// Constant folding must not hide the missing measurement-dependent branches.
+// CHECK: "qpu.to_bits"
+// CHECK: "qpu.bits_eq"
+// Measurement-dependent rotations must remain conditional.
 // CHECK-COUNT-6: scf.if
 // CHECK: "qpu.return"

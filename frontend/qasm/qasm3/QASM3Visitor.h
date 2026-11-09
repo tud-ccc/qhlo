@@ -50,6 +50,10 @@ public:
 
     std::any visitScope(qasm3Parser::ScopeContext* ctx) override;
 
+    std::any visitIfStatement(qasm3Parser::IfStatementContext* ctx) override;
+
+    std::any visitStatement(qasm3Parser::StatementContext* ctx) override;
+
     std::any
     visitIncludeStatement(qasm3Parser::IncludeStatementContext* ctx) override;
 
@@ -125,6 +129,15 @@ private:
     mlir::FailureOr<mlir::Value> emitExpression(
         qasm3Parser::ExpressionContext* expression,
         mlir::Type expectedType = {});
+
+    mlir::FailureOr<mlir::Value>
+    emitCondition(qasm3Parser::ExpressionContext* expression);
+
+    mlir::FailureOr<mlir::Value> emitComparison(
+        qasm3Parser::ExpressionContext* expression,
+        llvm::StringRef predicate,
+        qasm3Parser::ExpressionContext* lhs,
+        qasm3Parser::ExpressionContext* rhs);
 
     mlir::FailureOr<mlir::Value> convertValue(
         mlir::Value value,
