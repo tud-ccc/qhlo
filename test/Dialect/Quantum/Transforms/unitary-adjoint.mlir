@@ -82,3 +82,19 @@ func.func @tdg_s() -> (!quantum.qubit<1>) {
   // CHECK: return %[[Q3]]
   return %q3 : !quantum.qubit<1>
 }
+
+// -----
+
+// A block argument has no defining operation. Folding must not dereference it
+// or discard a controlled region without an applicable cancellation rule.
+// CHECK-LABEL: func.func @control_only_block_argument(
+// CHECK-SAME: %[[CONTROL:[^:]+]]: !quantum.qubit<1>
+func.func @control_only_block_argument(%control: !quantum.qubit<1>) -> !quantum.qubit<1> {
+  // CHECK: %[[R:.*]] = "quantum.ctrl"(%[[CONTROL]])
+  // CHECK: "quantum.yield"() : () -> ()
+  %r = "quantum.ctrl"(%control) ({
+    "quantum.yield"() : () -> ()
+  }) : (!quantum.qubit<1>) -> !quantum.qubit<1>
+  // CHECK: return %[[R]] : !quantum.qubit<1>
+  return %r : !quantum.qubit<1>
+}

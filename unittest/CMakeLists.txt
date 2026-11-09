@@ -8,6 +8,7 @@ find_package(doctest REQUIRED CONFIG)
 include(doctest)
 
 add_executable(quantum-mlir-tests
+  QuantumOpsTest.cpp
   main.cpp
 )
 
