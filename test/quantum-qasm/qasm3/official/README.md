@@ -64,7 +64,7 @@ The originals are kept unchanged. Includes resolve relative to the containing
 file, including the adjacent `stdgates.inc` library.
 
 These are upstream examples, not a guaranteed semantically valid conformance
-suite. For example, `cphase.qasm` references undeclared `q` and `CX`, and
+suite. For example, `cphase.qasm` references an undeclared register `q`, and
 `defcal.qasm` contains illustrative pulse bodies with placeholders. The QFT
 example obtains its `cphase` definition from the bundled `stdgates.inc`. Some
 examples use historical syntax (such as `creg` in `scqec.qasm`). A remaining
