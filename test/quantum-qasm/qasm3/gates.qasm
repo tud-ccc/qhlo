@@ -55,3 +55,97 @@ reset q;
 // CHECK: %[[IDENTITY:.*]] = "quantum.call"(%[[SECOND]]) <{callee = @identity}>
 // CHECK: "quantum.reset"(%[[IDENTITY]])
 // CHECK-NOT: "quantum.gate"
+
+// -----
+
+// Controls and targets from the same register stay distinct in the region.
+OPENQASM 3.0;
+qubit[2] q;
+ctrl @ p(pi / 2) q[0], q[1];
+h q[0];
+x q[1];
+
+// CHECK-LABEL: module {
+// CHECK: %[[ANGLE:.*]] = arith.constant 1.5707963267948966 : f64
+// CHECK: %[[SPLIT:.*]]:2 = "quantum.split"
+// CHECK: %[[CTRL:.*]]:2 = "quantum.ctrl"(%[[SPLIT]]#0, %[[SPLIT]]#1) <{nctrls = 1 : index}>
+// CHECK: ^bb0(%[[TARGET:[^:]+]]: !quantum.qubit<1>):
+// CHECK: %[[PHASE:.*]] = "quantum.P"(%[[TARGET]], %[[ANGLE]])
+// CHECK: "quantum.yield"(%[[PHASE]])
+// CHECK: "quantum.H"(%[[CTRL]]#0)
+// CHECK: "quantum.X"(%[[CTRL]]#1)
+
+// -----
+
+// Explicit and chained positive controls prepend operands in source order.
+OPENQASM 3.0;
+const int count = 1 + 1;
+qubit[4] q;
+ctrl(count) @ x q[0], q[1], q[2];
+ctrl @ ctrl(2) @ x q[0], q[1], q[2], q[3];
+
+// CHECK-LABEL: module {
+// CHECK: %[[FIRST:.*]]:3 = "quantum.ctrl"(%{{.*}}) <{nctrls = 2 : index}>
+// CHECK: ^bb0(%[[TARGET:[^:]+]]: !quantum.qubit<1>):
+// CHECK: %[[X:.*]] = "quantum.X"(%[[TARGET]])
+// CHECK: "quantum.yield"(%[[X]])
+// CHECK: %[[SECOND:.*]]:4 = "quantum.ctrl"(%[[FIRST]]#0, %[[FIRST]]#1, %[[FIRST]]#2, %{{.*}}) <{nctrls = 3 : index}>
+// CHECK: ^bb0(%[[TARGET2:[^:]+]]: !quantum.qubit<1>):
+// CHECK: %[[X2:.*]] = "quantum.X"(%[[TARGET2]])
+// CHECK: "quantum.yield"(%[[X2]])
+
+// -----
+
+// Each broadcast iteration uses the target state returned by the previous one.
+OPENQASM 3.0;
+qubit[2] controls;
+qubit target;
+ctrl @ x controls, target;
+h target;
+h controls;
+
+// CHECK-LABEL: module {
+// CHECK: %[[CONTROLS:.*]] = "quantum.alloc"() : () -> !quantum.qubit<2>
+// CHECK: %[[TARGET:.*]] = "quantum.alloc"() : () -> !quantum.qubit<1>
+// CHECK: %[[SPLIT:.*]]:2 = "quantum.split"(%[[CONTROLS]])
+// CHECK: %[[FIRST:.*]]:2 = "quantum.ctrl"(%[[SPLIT]]#0, %[[TARGET]])
+// CHECK: "quantum.yield"
+// CHECK: %[[SECOND:.*]]:2 = "quantum.ctrl"(%[[SPLIT]]#1, %[[FIRST]]#1)
+// CHECK: "quantum.yield"
+// CHECK: "quantum.H"(%[[SECOND]]#1)
+// CHECK: %[[MERGED:.*]] = "quantum.merge"(%[[FIRST]]#0, %[[SECOND]]#0)
+// CHECK: "quantum.H"(%[[MERGED]])
+
+// -----
+
+// Broadcast disjoint selections of a single register without rebinding its name.
+OPENQASM 3.0;
+qubit[4] q;
+ctrl @ x q[0:1], q[2:3];
+
+// CHECK-LABEL: module {
+// CHECK: "quantum.ctrl"
+// CHECK: "quantum.yield"
+// CHECK: "quantum.ctrl"
+// CHECK: "quantum.yield"
+
+// -----
+
+// Deferred custom gates capture classical parameters, never outer qubit values.
+OPENQASM 3.0;
+gate userPhase(theta) a { p(theta) a; }
+gate controlledPhase(theta) a, b { ctrl @ userPhase(theta) a, b; }
+qubit[2] q;
+controlledPhase(0.5) q[0], q[1];
+
+// CHECK-LABEL: module {
+// CHECK: sym_name = "controlledPhase"
+// CHECK: ^bb0(%[[CONTROL:[^:]+]]: !quantum.qubit<1>, %[[TARGET:[^:]+]]: !quantum.qubit<1>, %[[ANGLE:[^:]+]]: f64):
+// CHECK: %[[CTRL:.*]]:2 = "quantum.ctrl"(%[[CONTROL]], %[[TARGET]])
+// CHECK: ^bb0(%[[ARG:[^:]+]]: !quantum.qubit<1>):
+// CHECK: %[[CALL:.*]] = "quantum.call"(%[[ARG]], %[[ANGLE]]) <{callee = @userPhase}>
+// CHECK: "quantum.yield"(%[[CALL]])
+// CHECK: "quantum.return"(%[[CTRL]]#0, %[[CTRL]]#1)
+// CHECK: sym_name = "userPhase"
+// CHECK: "qpu.circuit"
+// CHECK: callee = @controlledPhase

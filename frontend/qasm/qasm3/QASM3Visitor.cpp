@@ -12,6 +12,7 @@
 #include "quantum-mlir/Dialect/Quantum/IR/QuantumTypes.h"
 
 #include <any>
+#include <cassert>
 #include <charconv>
 #include <limits>
 #include <llvm/ADT/APFloat.h>
@@ -207,6 +208,58 @@ llvm::SmallVector<mlir::Value> emitGateCall(
 
     auto results = op->getResults();
     return llvm::SmallVector<mlir::Value>(results.begin(), results.end());
+}
+
+mlir::FailureOr<llvm::SmallVector<mlir::Value>> emitResolvedGate(
+    const NativeGateSpec* native,
+    const GateDefinition* gate,
+    mlir::Location loc,
+    mlir::OpBuilder &builder,
+    mlir::ValueRange qubits,
+    mlir::ValueRange parameters)
+{
+    if (native)
+        return emitNativeGate(*native, loc, builder, qubits, parameters);
+    assert(gate && "expected a resolved gate");
+    return emitGateCall(*gate, loc, builder, qubits, parameters);
+}
+
+mlir::FailureOr<llvm::SmallVector<mlir::Value>> emitControlledGate(
+    const NativeGateSpec* native,
+    const GateDefinition* gate,
+    unsigned controlCount,
+    mlir::Location loc,
+    mlir::OpBuilder &builder,
+    mlir::ValueRange qubits,
+    mlir::ValueRange parameters)
+{
+    if (controlCount == 0)
+        return emitResolvedGate(native, gate, loc, builder, qubits, parameters);
+
+    auto control = mlir::quantum::CtrlOp::create(
+        builder,
+        loc,
+        qubits.take_front(controlCount),
+        qubits.drop_front(controlCount));
+    {
+        mlir::OpBuilder::InsertionGuard guard(builder);
+        auto &block = control.getBodyBlock();
+        builder.setInsertionPointToEnd(&block);
+        // Only region arguments represent targets here. Classical parameters
+        // remain captures; source register state is updated by the caller.
+        auto results = emitResolvedGate(
+            native,
+            gate,
+            loc,
+            builder,
+            block.getArguments(),
+            parameters);
+        if (mlir::failed(results)) return mlir::failure();
+        mlir::quantum::YieldOp::create(builder, loc, *results);
+    }
+    return llvm::SmallVector<mlir::Value>(
+        control.getResults().begin(),
+        control.getResults().end());
 }
 
 llvm::FailureOr<mlir::Type>
@@ -727,10 +780,37 @@ QASM3Visitor::visitGateStatement(qasm3Parser::GateStatementContext* ctx)
 std::any
 QASM3Visitor::visitGateCallStatement(qasm3Parser::GateCallStatementContext* ctx)
 {
-    if (!ctx->Identifier() || !ctx->gateModifier().empty()
-        || ctx->designator()) {
-        error(ctx, "gate modifiers, durations and gphase are not supported");
+    if (!ctx->Identifier() || ctx->designator()) {
+        error(ctx, "gate durations and gphase are not supported");
         return {};
+    }
+
+    unsigned controlCount = 0;
+    for (auto* modifier : ctx->gateModifier()) {
+        if (!modifier->CTRL()) {
+            error(modifier, "only ctrl gate modifiers are supported");
+            return {};
+        }
+        int64_t count = 1;
+        if (auto* expression = modifier->expression()) {
+            auto value = evaluateConstantInteger(expression);
+            if (mlir::failed(value)) return {};
+            count = *value;
+        }
+        if (count <= 0) {
+            error(
+                modifier,
+                "control count must be a positive constant integer");
+            return {};
+        }
+        if (static_cast<uint64_t>(count)
+            > std::numeric_limits<unsigned>::max() - controlCount) {
+            error(modifier, "control count is too large");
+            return {};
+        }
+        // Consecutive positive controls have the same semantics as one region
+        // whose leading operands contain all of those controls in source order.
+        controlCount += static_cast<unsigned>(count);
     }
 
     /// Gate name for emission
@@ -775,11 +855,12 @@ QASM3Visitor::visitGateCallStatement(qasm3Parser::GateCallStatementContext* ctx)
     const auto qubitCount = native ? native->qubitCount : gate->qubits.size();
     const auto parameterCount =
         native ? native->parameterCount : gate->parameters.size();
-    if (requests.size() != qubitCount
+    const auto totalQubitCount = qubitCount + controlCount;
+    if (requests.size() != totalQubitCount
         || parameterValues.size() != parameterCount) {
         error(
             ctx,
-            "expected " + llvm::Twine(qubitCount) + " qubit operands and "
+            "expected " + llvm::Twine(totalQubitCount) + " qubit operands and "
                 + llvm::Twine(parameterCount) + " parameters, got "
                 + llvm::Twine(requests.size()) + " and "
                 + llvm::Twine(parameterValues.size()));
@@ -789,7 +870,7 @@ QASM3Visitor::visitGateCallStatement(qasm3Parser::GateCallStatementContext* ctx)
 
     // Unary native gates accept register values, so retain contiguous blocks
     // and assemble a stepped selection only for the duration of the operation.
-    if (native && qubitCount == 1) {
+    if (native && qubitCount == 1 && controlCount == 0) {
         const auto &request = requests.front();
         auto selection = scope.materializeRegister(
             *request.reg,
@@ -857,20 +938,19 @@ QASM3Visitor::visitGateCallStatement(qasm3Parser::GateCallStatementContext* ctx)
         for (const auto &request : requests)
             qubits.push_back(
                 request.reg->getQubitValue(operandIndex(request, position)));
-        llvm::SmallVector<mlir::Value> results;
-        if (native) {
-            auto emitted =
-                emitNativeGate(*native, loc, builder, qubits, parameterValues);
-            if (mlir::failed(emitted)) {
-                hadError = true;
-                return {};
-            }
-            results = std::move(*emitted);
-        } else {
-            results =
-                emitGateCall(*gate, loc, builder, qubits, parameterValues);
+        auto results = emitControlledGate(
+            native ? &*native : nullptr,
+            gate,
+            controlCount,
+            loc,
+            builder,
+            qubits,
+            parameterValues);
+        if (mlir::failed(results)) {
+            hadError = true;
+            return {};
         }
-        for (auto [request, result] : llvm::zip_equal(requests, results))
+        for (auto [request, result] : llvm::zip_equal(requests, *results))
             request.reg->updateQubit(operandIndex(request, position), result);
     }
 

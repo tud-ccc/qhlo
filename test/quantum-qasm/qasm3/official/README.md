@@ -60,14 +60,15 @@ Most upstream files omit the optional OPENQASM version declaration. `teleport.qa
 uses `OPENQASM 3;`, while `arrays.qasm` uses `OPENQASM 3.0;`. The frontend
 dispatcher accepts both forms and defaults to QASM3 when the
 version declaration is absent, skipping leading line and block comments.
-The originals are kept unchanged. Include resolution for the adjacent
-`stdgates.inc` will also need frontend support.
+The originals are kept unchanged. Includes resolve relative to the containing
+file, including the adjacent `stdgates.inc` library.
 
 These are upstream examples, not a guaranteed semantically valid conformance
-suite. For example, `cphase.qasm` references undeclared `q` and `CX`, `qft.qasm`
-uses `cphase` without defining it, and `defcal.qasm` contains illustrative pulse
-bodies with placeholders. Some examples use historical syntax (such as `creg`
-in `scqec.qasm`). A remaining failure may therefore need an upstream correction,
+suite. For example, `cphase.qasm` references undeclared `q` and `CX`, and
+`defcal.qasm` contains illustrative pulse bodies with placeholders. The QFT
+example obtains its `cphase` definition from the bundled `stdgates.inc`. Some
+examples use historical syntax (such as `creg` in `scqec.qasm`). A remaining
+failure may therefore need an upstream correction,
 a separately documented local test, or a diagnostic expectation rather than a
 new language feature. Review each example before removing its expected-failure
 marker; do not silently change the imported files to make compilation succeed.
